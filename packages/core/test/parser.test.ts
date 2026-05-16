@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseFixtureFile } from "./fixtures.js";
+import { parse as parseText } from "../src/parser/parse.js";
 
 describe("parser: valid fixtures parse without errors", () => {
     it("coffee A0 — canonical activity example", () => {
@@ -64,17 +65,18 @@ describe("parser: valid fixtures parse without errors", () => {
 });
 
 describe("parser: error fixtures emit container-mismatch diagnostics", () => {
-    it("flags tunnel decl inside activity body", () => {
-        const { errors } = parseFixtureFile(
+    it("accepts T* in activity body as boundary tunnel entry (inherit-ID model)", () => {
+        // Per spec/01-dsl.md, T* in activity boundary is a flat tunnel echo
+        // (rule 20 tunnel-in-boundary). Parser must NOT flag this as an error.
+        const { ast, errors } = parseFixtureFile(
             "parser/errors/tunnel-in-activity.idef0"
         );
-        expect(
-            errors.some((e) =>
-                /Tunnel declaration .* not allowed inside 'activity'/.test(
-                    e.message
-                )
-            )
-        ).toBe(true);
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "activity") throw new Error("expected activity");
+        const tunnelBoundary = ast.boundary.find(
+            (b) => b.kind === "tunnel" && b.id === "T1"
+        );
+        expect(tunnelBoundary).toBeDefined();
     });
     it("flags root reference inside activity body", () => {
         const { errors } = parseFixtureFile(
@@ -108,6 +110,590 @@ describe("parser: error fixtures emit container-mismatch diagnostics", () => {
                     e.message
                 )
             )
+        ).toBe(true);
+    });
+});
+
+describe("parser: sticky comments on context root reference `...A0`", () => {
+    // Spec/02-formatting.md правило прилипания комментариев применяется ко
+    // **всем anchor-узлам** контекста: tunnels И root reference. Adjacent
+    // комменты (без пустой строки между ними и anchor'ом) обязаны быть
+    // в `commentsAbove`/`commentsBelow` соответствующего AST-узла —
+    // только тогда форматтер их сохранит при сортировке/пересборке. Если
+    // комменты падают в floating, они теряются (per spec body-floating
+    // dropped).
+
+    it("comments above `...A0` are captured as rootRef.commentsAbove", () => {
+        const text = `context A-0 "ctx" {
+    T1 "tunnel"
+
+    # describe-root above
+    # second line
+    ...A0
+}
+`;
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A-0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "context") throw new Error("expected context");
+        expect(ast.rootRef).not.toBeNull();
+        expect(ast.rootRef!.commentsAbove.map((c) => c.text)).toEqual([
+            "describe-root above",
+            "second line",
+        ]);
+    });
+
+    it("comments below `...A0` are captured as rootRef.commentsBelow", () => {
+        const text = `context A-0 "ctx" {
+    T1 "tunnel"
+
+    ...A0
+    # describe-root below
+}
+`;
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A-0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "context") throw new Error("expected context");
+        expect(ast.rootRef).not.toBeNull();
+        expect(ast.rootRef!.commentsBelow.map((c) => c.text)).toEqual([
+            "describe-root below",
+        ]);
+    });
+});
+
+describe("parser: multi-line continuation (spec/01-dsl.md «Continuation lines»)", () => {
+    // Spec: «Continuation lines (строки, не начинающиеся со start-литерала) —
+    // продолжение предыдущей декларации». Парсер обязан поддерживать переносы
+    // строк между токенами шапки и между id↔name внутри boundary-деклараций.
+
+    it("activity header tokens may be split across multiple lines", () => {
+        const text = `activity
+A0
+"Pizza on a conveyor"
+{
+    I1 "in"
+    O1 "out"
+
+    A1 "child" : I1 -> X11[O1]
+}
+`;
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "activity") throw new Error("expected activity");
+        expect(ast.id).toBe("A0");
+        expect(ast.name.value).toBe("Pizza on a conveyor");
+        expect(ast.boundary).toHaveLength(2);
+        expect(ast.blocks).toHaveLength(1);
+    });
+
+    it("context header tokens may be split across multiple lines", () => {
+        const text = `context
+A-0
+"Pizza context"
+{
+    T1 "noise"
+
+    ...A0
+}
+`;
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A-0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "context") throw new Error("expected context");
+        expect(ast.id).toBe("A-0");
+        expect(ast.name.value).toBe("Pizza context");
+    });
+
+    it("boundary decl: id and description on separate lines (with blank in between)", () => {
+        const text = `activity A0 "root" {
+    I1
+
+    "input desc"
+    O1
+    "output desc"
+
+    A1 "child" : I1 -> X11[O1]
+}
+`;
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "activity") throw new Error("expected activity");
+        const flat = ast.boundary.filter((b) => b.kind === "flat");
+        const i1 = flat.find((b) => b.kind === "flat" && b.id === "I1");
+        const o1 = flat.find((b) => b.kind === "flat" && b.id === "O1");
+        if (!i1 || i1.kind !== "flat") throw new Error("I1 missing");
+        if (!o1 || o1.kind !== "flat") throw new Error("O1 missing");
+        expect(i1.description.value).toBe("input desc");
+        expect(o1.description.value).toBe("output desc");
+    });
+
+    it("functional block: id and name on different lines, multi-line consumed/produced", () => {
+        const text = `activity A0 "root" {
+    I1 "in"
+    O1 "out"
+    O2 "out2"
+
+    A1
+        "child"
+        :
+            I1
+        ->
+            X11[O1]
+            ,
+            X12[O2]
+}
+`;
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "activity") throw new Error("expected activity");
+        expect(ast.blocks).toHaveLength(1);
+        const b = ast.blocks[0]!;
+        expect(b.id).toBe("A1");
+        expect(b.name.value).toBe("child");
+        expect(b.consumed).toHaveLength(1);
+        expect(b.produced).toHaveLength(2);
+    });
+
+    it("REGRESSION: declaration endLine reflects literal close, not lookahead position", () => {
+        // Когда parseDeclarationItem делает lookahead `:` через
+        // consumeWhitespaceMultilineForDecl, он съедает переносы строк и
+        // продвигает stream.position.line на следующую декларацию. Если
+        // endLine браться из stream.position после lookahead — две соседние
+        // декларации, разделённые пустой строкой, сольются в одну группу
+        // sticky-comments, и комментарии между ними прилипнут к следующему
+        // блоку. Должно быть наоборот: комментарии остаются floating и
+        // выбрасываются форматтером per spec/02-formatting.md.
+        const text = `activity A0 "root" {
+    I1 "in"
+    O1 "out"
+    T1 "t"
+    # stray comment in boundary section
+
+    A1 "child" : I1, C[T1] -> X11[O1]
+}
+
+`;
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "activity") throw new Error("expected activity");
+        // Stray comment в boundary section без блока — должен быть floating,
+        // не commentsAbove первого блока.
+        expect(ast.blocks).toHaveLength(1);
+        expect(ast.blocks[0]!.commentsAbove).toHaveLength(0);
+        expect(
+            ast.floatingComments.some(
+                (c) =>
+                    c.text === "stray comment in boundary section" &&
+                    c.location.range.start.line > ast.location.range.start.line,
+            ),
+        ).toBe(true);
+    });
+});
+
+describe("parser: comment inside a declaration terminates it (spec/01-dsl.md)", () => {
+    // Spec 01-dsl.md, раздел «Границы деклараций»:
+    //   «Комментарии внутри декларации запрещены — `# ...` всегда терминирует
+    //    текущую декларацию».
+    //
+    // Это load-bearing инвариант для всей грамматики: парсер использует `#` как
+    // одну из границ декларации (наравне с EOF, `}`, и start-литералом
+    // следующей строки). Без этого правила прилипание комментариев и
+    // multi-line объявления стали бы неоднозначными.
+
+    it("`#` on its own line between an id and its description aborts the boundary decl", () => {
+        const { ast, errors } = parseFixtureFile(
+            "parser/errors/comment-inside-declaration.idef0",
+        );
+        // 1) Парсер обязан зафиксировать как минимум одну ошибку — это
+        //    структурно невалидный ввод (декларация I1 не получила description).
+        expect(errors.length).toBeGreaterThan(0);
+        // 2) Конкретная диагностика про missing description должна указывать
+        //    на строку с `#`-комментарием — именно там декларация I1 обрывается.
+        expect(
+            errors.some((e) =>
+                /Expected string literal/i.test(e.message),
+            ),
+        ).toBe(true);
+        // 3) Trailing string literal `"label ..."` на отдельной строке должен
+        //    быть отвергнут как неподходящий start-of-declaration token (literal
+        //    не является start-литералом ни в одном контейнере).
+        expect(
+            errors.some((e) =>
+                /Expected declaration starting with an identifier/i.test(
+                    e.message,
+                ),
+            ),
+        ).toBe(true);
+        // 4) Несмотря на ошибки, парсер не падает и восстанавливается до
+        //    следующей валидной декларации (panic-mode recovery) — блок A1
+        //    обязан быть распознан полностью.
+        if (!ast || ast.kind !== "activity") throw new Error("expected activity");
+        expect(ast.blocks.map((b) => b.id)).toEqual(["A1"]);
+    });
+
+    it("inline `#` mid-line is part of the previous token? — NO: it always starts a comment when at the start of a (logical) line in the body", () => {
+        // Эту тонкость подсвечиваем отдельным тестом: `#` лексер ловит только
+        // когда видит его как первый non-whitespace токен строки тела. Inline
+        // в середине ввода (например, в строковом литерале) — это просто
+        // обычный символ. Если же `#` идёт сразу после переноса строки
+        // внутри multiline-блока, он терминирует декларацию.
+        const text = `activity A0 "root" {
+    I1 "a # in a string"
+
+    A1 "child" : I1 -> X11[O1]
+}
+`;
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "activity") throw new Error("activity");
+        expect(ast.boundary).toHaveLength(1);
+        const b = ast.boundary[0]!;
+        if (b.kind !== "flat") throw new Error("expected flat");
+        expect(b.description.value).toBe("a # in a string");
+    });
+
+    it("`#` after `->` between consumed and produced terminates the block declaration", () => {
+        // Это вариант той же инвариантности на уровне функционального блока:
+        // `# ...` после `->` обрывает блок, и produced list считается пустым —
+        // что обязано породить грамматическую ошибку «must produce at least
+        // one arrow».
+        const text = `activity A0 "root" {
+    I1 "in"
+    O1 "out"
+
+    A1 "child" : I1 ->
+        # mid-decl comment kills the block
+        X11[O1]
+}
+`;
+        const { errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(errors.length).toBeGreaterThan(0);
+        expect(
+            errors.some((e) => /produce at least one arrow/i.test(e.message)),
+        ).toBe(true);
+    });
+});
+
+describe("parser: lexer treatment of '-' (only after leading 'A')", () => {
+    // Контракт лексера: `-` — word char ТОЛЬКО на позиции 1 после ведущего `A`
+    // (литерал контекстного id `A-0`). В любой другой позиции `-` завершает
+    // токен. Это нужно чтобы грамматические разделители вроде `->` корректно
+    // отделялись от arrow id без обязательного пробела.
+
+    it("M1->X21 without surrounding spaces splits into 'M1' and '->'", () => {
+        // Если `-` был бы word char всегда, readWord проглотила бы `M1-` и
+        // парсер ошибочно бы посчитал, что consumed-список продолжается.
+        const text = `activity A0 "root" {
+    I1 "in"
+    O1 "out"
+
+    A1 "child" :I1,M1->X11[O1]
+}
+`;
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(errors.filter((e) => /Expected/.test(e.message))).toEqual([]);
+        if (!ast || ast.kind !== "activity") throw new Error("activity");
+        const block = ast.blocks[0]!;
+        expect(block.consumed.map((c) => (c.kind === "parent" ? c.id : c.sourceId))).toEqual(
+            ["I1", "M1"],
+        );
+        expect(block.produced).toHaveLength(1);
+        const p = block.produced[0]!;
+        if (p.kind !== "boundary-out") throw new Error("expected boundary-out");
+        expect(p.id).toBe("X11");
+        expect(p.mappedTo).toBe("O1");
+    });
+
+    it("'A-0' context id reads as a single token through readWord", () => {
+        const text = `context A-0 "ctx" {
+    T1 "tunnel"
+
+    ...A0
+}
+`;
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A-0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "context") throw new Error("context");
+        expect(ast.id).toBe("A-0");
+    });
+
+    it("'M-1' in boundary stops readWord at '-' (no leading 'A')", () => {
+        // Лексер должен прочитать только `M` и остановиться на `-`. Любая
+        // диагностика, которая последует от парсера/валидатора, не должна
+        // упоминать `M-1` целиком — `-` к id не приклеивается.
+        const text = `activity A0 "root" {
+    M-1 "mech"
+}
+`;
+        const { errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        // Главный инвариант: дефис никогда не оказался частью какого-либо id.
+        expect(errors.some((e) => /M-1/.test(e.message))).toBe(false);
+        // И при этом грамматическая ошибка обязана быть зафиксирована —
+        // невозможно молча проглотить такой ввод.
+        expect(errors.length).toBeGreaterThan(0);
+    });
+
+    it("'-' at start of declaration position is not a word char (returns null)", () => {
+        // Тривиальная подстраховка: токен не может начинаться с `-`. Если бы
+        // лексер допускал — мы бы строили AST для бессмыслицы.
+        const text = `activity A0 "root" {
+    -1 "weird"
+}
+`;
+        const { errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        // Парсер должен сообщить о невозможности начать декларацию.
+        expect(errors.length).toBeGreaterThan(0);
+    });
+
+    it("'A-' (no suffix after dash) parses as token 'A-' and gets validation error downstream", () => {
+        // Лексер обязан принять `A-` (правило: `-` после ведущего `A`).
+        // Что суффикса нет — это уровень парсера/валидатора. Здесь проверяем,
+        // что лексер не глотает соседний токен.
+        const text = `context A- "ctx" {
+}
+`;
+        const { errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A-0.idef0",
+        });
+        // Context id != "A-0" → должна быть соответствующая диагностика парсера.
+        expect(
+            errors.some((e) => /'A-'/.test(e.message) || /A-0/.test(e.message)),
+        ).toBe(true);
+    });
+});
+
+describe("parser: produced plug labels (rule 21 surface)", () => {
+    // Inline parser checks for the optional plug label after [...] in produced
+    // refs. Per spec/01-dsl.md, all three bracket forms (X[O*], X[T*], X[X*])
+    // accept an optional string literal as a label. The label is what rule 21
+    // checks for structural correctness (forbidden at single plug, required &
+    // unique at join). The parser must accept all four shapes — with/without
+    // label across all three bracket variants.
+    const SRC = (produced: string) => `activity A0 "root" {
+    I1 "in"
+    O1 "out"
+    O2 "out2"
+    T1 "tn"
+
+    A1 "child" : I1 -> ${produced}
+}
+`;
+
+    it("X[O*] with label produces boundary-out with label field", () => {
+        const text = SRC('X11[O1] "audio"');
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "activity") throw new Error("activity");
+        const p = ast.blocks[0]!.produced[0]!;
+        if (p.kind !== "boundary-out") throw new Error("expected boundary-out");
+        expect(p.label?.value).toBe("audio");
+    });
+
+    it("X[O*] without label has undefined label", () => {
+        const text = SRC("X11[O1]");
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "activity") throw new Error("activity");
+        const p = ast.blocks[0]!.produced[0]!;
+        if (p.kind !== "boundary-out") throw new Error("expected boundary-out");
+        expect(p.label).toBeUndefined();
+    });
+
+    it("X[T*] with label produces tunnel-out with label field", () => {
+        const text = SRC('X11[T1] "alpha"');
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "activity") throw new Error("activity");
+        const p = ast.blocks[0]!.produced[0]!;
+        if (p.kind !== "tunnel-out") throw new Error("expected tunnel-out");
+        expect(p.label?.value).toBe("alpha");
+    });
+
+    it("X[X*] with label produces parent-x-mapped with label field", () => {
+        const text = `activity A0 "root" {
+    I1 "in"
+    O[X22] "src"
+
+    A1 "child" : I1 -> X11[X22] "left"
+}
+`;
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "activity") throw new Error("activity");
+        const p = ast.blocks[0]!.produced[0]!;
+        if (p.kind !== "parent-x-mapped") throw new Error("expected parent-x-mapped");
+        expect(p.label?.value).toBe("left");
+    });
+
+    it("multiple labelled plugs separated by comma parse independently", () => {
+        const text = `activity A0 "root" {
+    I1 "in"
+    O1 "out"
+
+    A1 "a" : I1 -> X11[O1] "audio"
+    A2 "b" : I1 -> X21[O1] "video"
+}
+`;
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "activity") throw new Error("activity");
+        const p0 = ast.blocks[0]!.produced[0]!;
+        const p1 = ast.blocks[1]!.produced[0]!;
+        if (p0.kind !== "boundary-out" || p1.kind !== "boundary-out") {
+            throw new Error("expected boundary-out");
+        }
+        expect(p0.label?.value).toBe("audio");
+        expect(p1.label?.value).toBe("video");
+    });
+});
+
+describe("parser: string literal handling (spec/01-dsl.md «Строковые литералы»)", () => {
+    it("parses `\\\"` and `\\\\` escapes inside string literals", () => {
+        const { ast, errors } = parseFixtureFile(
+            "parser/valid/string-escapes.idef0",
+        );
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "activity") throw new Error("activity");
+        // Activity name carries both escape kinds.
+        expect(ast.name.value).toBe('with "quote" and \\ backslash');
+        const byKind = ast.boundary.filter((b) => b.kind === "flat");
+        const i1 = byKind.find((b) => b.kind === "flat" && b.id === "I1");
+        const o1 = byKind.find((b) => b.kind === "flat" && b.id === "O1");
+        if (!i1 || i1.kind !== "flat") throw new Error("I1 missing");
+        if (!o1 || o1.kind !== "flat") throw new Error("O1 missing");
+        expect(i1.description.value).toBe('input with "quoted" word');
+        expect(o1.description.value).toBe("C:\\Path\\To\\Thing");
+    });
+
+    it("flags newline inside string literal as an error", () => {
+        const { errors } = parseFixtureFile(
+            "parser/errors/newline-in-string.idef0",
+        );
+        expect(
+            errors.some((e) =>
+                /Unexpected newline inside string literal/i.test(e.message),
+            ),
+        ).toBe(true);
+    });
+
+    it("flags an unterminated string literal at EOF", () => {
+        const { errors } = parseFixtureFile(
+            "parser/errors/unterminated-string.idef0",
+        );
+        // Парсер обязан явно отрапортовать «Unterminated string literal».
+        // (При обрыве на конце строки также может прилететь дополнительная
+        // диагностика — это не страшно, главное — наличие сигнала.)
+        expect(
+            errors.some((e) => /Unterminated string literal/i.test(e.message))
+                || errors.some((e) =>
+                    /Unexpected newline inside string literal/i.test(e.message),
+                ),
+        ).toBe(true);
+    });
+});
+
+describe("parser: header braces (spec/01-dsl.md «Базовая структура файла»)", () => {
+    it("flags missing `{` after the activity header", () => {
+        const { errors } = parseFixtureFile(
+            "parser/errors/missing-open-brace.idef0",
+        );
+        expect(
+            errors.some((e) => /Expected '\{' to open activity body/i.test(e.message)),
+        ).toBe(true);
+    });
+
+    it("flags missing `}` at the end of the body", () => {
+        const { errors } = parseFixtureFile(
+            "parser/errors/missing-close-brace.idef0",
+        );
+        expect(
+            errors.some((e) => /Expected '\}' to close body/i.test(e.message)),
+        ).toBe(true);
+    });
+});
+
+describe("parser: empty/header-less inputs return null AST without throwing", () => {
+    it("empty string yields ast=null and no errors", () => {
+        const { ast, errors } = parseText("", {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(ast).toBeNull();
+        expect(errors).toEqual([]);
+    });
+
+    it("whitespace-only input yields ast=null and no errors", () => {
+        const { ast, errors } = parseText("\n\n   \n", {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(ast).toBeNull();
+        expect(errors).toEqual([]);
+    });
+
+    it("non-keyword opener yields a descriptive error and ast=null", () => {
+        const { ast, errors } = parseText("foo bar baz", {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(ast).toBeNull();
+        expect(
+            errors.some((e) =>
+                /Expected 'activity' or 'context' at top level/i.test(e.message),
+            ),
         ).toBe(true);
     });
 });
@@ -165,6 +751,22 @@ describe("parser: error fixtures enforce arrow grammar", () => {
             ),
         ).toBe(true);
     });
+    it("structural arrow-id violation carries `validator.rule-8` ruleId", () => {
+        // REGRESSION: parser flagged structural arrow-id violations (`I_1`,
+        // `I0`, etc.) without a `ruleId`, while spec/04-validator.md rule 8
+        // explicitly covers arrow IDs. Owners of the structural check are
+        // documented as rule-8; diagnostics must reflect that.
+        const { errors } = parseFixtureFile(
+            "parser/errors/underscore-id.idef0",
+        );
+        expect(
+            errors.some(
+                (e) =>
+                    /arrow id 'I_1' invalid/.test(e.message) &&
+                    e.ruleId === "validator.rule-8",
+            ),
+        ).toBe(true);
+    });
     it("flags activity id with 0 in suffix (e.g., A10)", () => {
         const { errors } = parseFixtureFile(
             "parser/errors/bad-activity-suffix.idef0"
@@ -218,6 +820,7 @@ function blockSignature(block: {
         | { kind: "new"; id: string; description: { value: string } }
         | { kind: "boundary-out"; id: string; mappedTo: string }
         | { kind: "tunnel-out"; id: string; mappedTo: string }
+        | { kind: "parent-x-mapped"; id: string; mappedTo: string }
     )[];
 }): BlockSignature {
     return {
@@ -228,13 +831,18 @@ function blockSignature(block: {
                 ? `${c.role}:${c.id}`
                 : `${c.role}[${c.sourceId}]`
         ),
-        produced: block.produced.map((p) =>
-            p.kind === "new"
-                ? `new:${p.id}:${p.description.value}`
-                : p.kind === "boundary-out"
-                  ? `bo:${p.id}=>${p.mappedTo}`
-                  : `to:${p.id}=>${p.mappedTo}`
-        ),
+        produced: block.produced.map((p) => {
+            switch (p.kind) {
+                case "new":
+                    return `new:${p.id}:${p.description.value}`;
+                case "boundary-out":
+                    return `bo:${p.id}=>${p.mappedTo}`;
+                case "tunnel-out":
+                    return `to:${p.id}=>${p.mappedTo}`;
+                case "parent-x-mapped":
+                    return `pxm:${p.id}=>${p.mappedTo}`;
+            }
+        }),
     };
 }
 

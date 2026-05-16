@@ -1,0 +1,17 @@
+# Per spec/01-dsl.md «Комментарии внутри декларации запрещены — `# ...` всегда
+# терминирует текущую декларацию». Here `I1` is declared without a description,
+# then a `#`-line appears, then a stray string literal on the next line. The
+# parser must:
+#   1) terminate I1's boundary declaration at the `#` (so I1 ends up with no
+#      string literal and that's a structural error),
+#   2) treat the second `#` line as a separate comment,
+#   3) reject the trailing `"label"` as an unexpected token at start of line
+#      (a literal cannot start a declaration).
+
+activity A0 "root" {
+    I1
+    # mid-decl comment — must terminate I1's declaration
+    "label that no longer belongs to I1"
+
+    A1 "child" : I1 -> X11[O1]
+}

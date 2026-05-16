@@ -15,12 +15,47 @@ import { InvariantViolation } from "../types.js";
 import { compareActivityIds, compareArrowKeys } from "../ids.js";
 
 const INDENT = "    "; // 4 spaces — one indent step
-const BOUNDARY_ROLE_ORDER: ReadonlyArray<"I" | "O" | "C" | "M"> = [
+// Per spec/02-formatting.md, boundary group order is I → C → M → O → T.
+const BOUNDARY_ROLE_ORDER: ReadonlyArray<"I" | "C" | "M" | "O"> = [
     "I",
-    "O",
     "C",
     "M",
+    "O",
 ];
+
+// Sort key for boundary arrow within its role group. Used to put flat IDs
+// before bracket-form IDs (digits before '[' per spec/02-formatting.md
+// "Сортировка стрелок внутри групп").
+function boundarySortKey(a: BoundaryArrow): string {
+    switch (a.kind) {
+        case "flat":
+            return a.id;
+        case "sibling-x-consumed":
+            return `${a.role}[${a.sourceId}]`;
+        case "parent-x-out":
+            return `O[${a.sourceId}]`;
+        case "tunnel":
+            return a.id;
+    }
+}
+
+function boundaryGroup(a: BoundaryArrow): "I" | "C" | "M" | "O" | "T" {
+    switch (a.kind) {
+        case "flat":
+            return a.role;
+        case "sibling-x-consumed":
+            return a.role;
+        case "parent-x-out":
+            return "O";
+        case "tunnel":
+            return "T";
+    }
+}
+
+function renderBoundaryArrow(a: BoundaryArrow): string {
+    const head = boundarySortKey(a);
+    return `${head} ${quoteString(a.description.value)}`;
+}
 
 type BlockMode = "mode1" | "mode2" | "mode3";
 
@@ -57,12 +92,11 @@ function formatActivity(ast: ActivityAST, options: FormatOptions): string {
     appendPreHeaderComments(lines, ast);
     lines.push(`activity ${ast.id} ${quoteString(ast.name.value)} {`);
 
-    // Boundary arrows: sorted by role (I, O, C, M) then by id within role.
+    // Boundary arrows: sorted by group (I → C → M → O → T) then by sort key
+    // within group (flat before bracket).
     const boundary = sortBoundary(ast.boundary);
     for (const b of boundary) {
-        lines.push(
-            `${INDENT}${b.id} ${quoteString(b.description.value)}`
-        );
+        lines.push(`${INDENT}${renderBoundaryArrow(b)}`);
     }
 
     if (boundary.length > 0 && ast.blocks.length > 0) {
@@ -155,7 +189,9 @@ function formatContext(ast: ContextAST, options: FormatOptions): string {
 
     if (ast.rootRef) {
         if (sortedTunnels.length > 0) lines.push("");
+        appendComments(lines, ast.rootRef.commentsAbove);
         lines.push(`${INDENT}...${ast.rootRef.targetId}`);
+        appendComments(lines, ast.rootRef.commentsBelow);
     }
 
     lines.push("}");
@@ -167,30 +203,27 @@ function formatContext(ast: ContextAST, options: FormatOptions): string {
 function sortBoundary(
     arrows: readonly BoundaryArrow[]
 ): readonly BoundaryArrow[] {
-    const grouped: Record<"I" | "O" | "C" | "M", BoundaryArrow[]> = {
+    const grouped: Record<"I" | "C" | "M" | "O" | "T", BoundaryArrow[]> = {
         I: [],
-        O: [],
         C: [],
         M: [],
+        O: [],
+        T: [],
     };
-    const orphans: BoundaryArrow[] = [];
     for (const a of arrows) {
-        const r = a.id.charAt(0);
-        if (r === "I" || r === "O" || r === "C" || r === "M") {
-            grouped[r].push(a);
-        } else {
-            orphans.push(a);
-        }
+        grouped[boundaryGroup(a)].push(a);
     }
-    for (const r of BOUNDARY_ROLE_ORDER) {
-        grouped[r].sort((x, y) => compareArrowKeys(x.id, y.id));
+    for (const r of [...BOUNDARY_ROLE_ORDER, "T"] as const) {
+        grouped[r].sort((x, y) =>
+            compareArrowKeys(boundarySortKey(x), boundarySortKey(y))
+        );
     }
     return [
         ...grouped.I,
-        ...grouped.O,
         ...grouped.C,
         ...grouped.M,
-        ...orphans,
+        ...grouped.O,
+        ...grouped.T,
     ];
 }
 
@@ -205,8 +238,11 @@ function preRenderBlock(block: FunctionalBlock): PreRendered {
         compareArrowKeys(a.id, b.id)
     );
     const produced = sortedProduced.map(renderProducedRef).join(", ");
+    // Mode 3 trigger: > 1 produced item carries its own text literal — that is,
+    // own-described `X11 "..."` OR any bracket-form with a plug label `X11[O1] "..."`
+    // (per spec/02-formatting.md «Produced-формы с label»).
     const ownDescribedCount = block.produced.filter(
-        (p) => p.kind === "new"
+        (p) => p.kind === "new" || p.label !== undefined
     ).length;
     return {
         block,
@@ -236,7 +272,10 @@ function renderConsumedRef(c: ConsumedArrowRef): string {
 
 function renderProducedRef(p: ProducedArrowRef): string {
     if (p.kind === "new") return `${p.id} ${quoteString(p.description.value)}`;
-    return `${p.id}[${p.mappedTo}]`;
+    const head = `${p.id}[${p.mappedTo}]`;
+    return p.label !== undefined
+        ? `${head} ${quoteString(p.label.value)}`
+        : head;
 }
 
 // ─── Mode classification ─────────────────────────────────────────────────────

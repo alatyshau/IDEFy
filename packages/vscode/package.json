@@ -1,5 +1,5 @@
 {
-    "name": "@idefy/vscode",
+    "name": "idefy-vscode",
     "displayName": "IDEFy",
     "description": "Text DSL for IDEF0 modelling — editor support, validation, ASCII viewer.",
     "version": "0.0.0",
@@ -12,9 +12,7 @@
     },
     "categories": ["Programming Languages", "Linters", "Visualization"],
     "main": "./dist/extension.js",
-    "activationEvents": [
-        "onStartupFinished"
-    ],
+    "activationEvents": [],
     "contributes": {
         "languages": [
             {
@@ -117,10 +115,11 @@
     },
     "scripts": {
         "build": "tsup",
+        "dev": "tsup --watch",
         "typecheck": "tsc --noEmit",
         "test": "vitest run",
         "test:watch": "vitest",
-        "vsce:package": "vsce package --no-dependencies --out dist/idefy.vsix"
+        "vsce:package": "pnpm run build && vsce package --no-dependencies --out dist/idefy.vsix"
     },
     "dependencies": {
         "@idefy/core": "workspace:*",
@@ -129,6 +128,7 @@
     "devDependencies": {
         "@types/node": "^25.8.0",
         "@types/vscode": "^1.95.0",
+        "@vscode/vsce": "^3.2.0",
         "tsup": "^8.3.5",
         "typescript": "^5.6.3",
         "vitest": "^2.1.5"

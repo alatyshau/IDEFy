@@ -1,0 +1,5 @@
+# Per spec/01-dsl.md: a string literal that never closes is an error.
+
+activity A0 "root" {
+    I1 "this string never closes
+}

@@ -1,0 +1,13 @@
+# Per spec/02-formatting.md «Текст после закрывающей `}` шапки»:
+# the formatter drops any text after the closing `}`.
+
+activity A0 "Root" {
+    I1 "in"
+    O1 "out"
+
+    A1 "child" : I1 -> X11[O1]
+}
+
+# Trailer that the formatter must drop.
+Some free-form notes here.
+Even multiple lines.

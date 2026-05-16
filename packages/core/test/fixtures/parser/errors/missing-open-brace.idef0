@@ -1,0 +1,4 @@
+activity A0 "root"
+    I1 "in"
+    O1 "out"
+}

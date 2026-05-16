@@ -80,13 +80,36 @@ StringLiteral {
 
 ## Граничные стрелки (boundary, в шапке activity)
 
+Boundary section может содержать пять кинд-вариантов в соответствии с `spec/01-dsl.md` (inherit-ID модель). Тип — discriminated union:
+
 ```
-BoundaryArrow {
-    id: ArrowId             // I*, O*, C*, M* — TunnelDecl отдельно
-    description: StringLiteral
-    location: SourceLocation
-}
+BoundaryArrow =
+    | { kind: 'flat', role: 'I'|'O'|'C'|'M', id: ArrowId,
+        description: StringLiteral, location: SourceLocation }
+       // I1, O1, C1, M1 — параметризовано ролью; описание здесь
+       // или эхо от ancestor-boundary с тем же id (см. owner-таблицу
+       // в spec/04-validator.md)
+
+    | { kind: 'sibling-x-consumed', role: 'I'|'C'|'M', sourceId: ArrowId,
+        description: StringLiteral, location: SourceLocation }
+       // I[X22], C[X22], M[X22] — sibling-X на уровне родителя,
+       // потребляемая текущей активностью; description эхо от
+       // produced 'new' на уровне ближайшего предка
+
+    | { kind: 'parent-x-out', sourceId: ArrowId,
+        description: StringLiteral, location: SourceLocation }
+       // O[X11] — own-described X родителя, который данная активность
+       // производит наружу; description эхо от parent block's produced 'new'
+
+    | { kind: 'tunnel', id: ArrowId,
+        description: StringLiteral, location: SourceLocation }
+       // T1, T2 — плоская запись туннеля в boundary активности
+       // (одна на туннель, без префикса роли — роль определяется
+       // на месте использования внутри decomposition section).
+       // description эхо от A-0.context.idef0 TunnelDecl
 ```
+
+`role` для `flat` — буквенный префикс ID. `role` для `sibling-x-consumed` — буквенный префикс самого внешнего токена (`I` в `I[X22]`). Для `parent-x-out` роль фиксирована (`O`). Для `tunnel` роли нет — это плоская декларация без префикса.
 
 ## Туннели (в шапке context)
 
@@ -146,11 +169,21 @@ ConsumedArrowRef =
 ```
 ProducedArrowRef =
     | { kind: 'new', id: ArrowId, description: StringLiteral, location: SourceLocation }
-       // X11 "Описание" — новая внутренняя стрелка
-    | { kind: 'boundary-out', id: ArrowId, mappedTo: ArrowId, location: SourceLocation }
-       // X11[O1] — также выход родителя
-    | { kind: 'tunnel-out', id: ArrowId, mappedTo: ArrowId, location: SourceLocation }
-       // X11[T1] — также туннель
+       // X11 "Описание" — новая own-described внутренняя стрелка (sibling-X)
+    | { kind: 'boundary-out', id: ArrowId, mappedTo: ArrowId,
+        label?: StringLiteral, location: SourceLocation }
+       // X11[O1] — plug X11 подключён к O-сокету родителя 'O1';
+       // label опционален: запрещён при single plug, обязателен при join
+       // (см. spec/04-validator.md правило 21)
+    | { kind: 'tunnel-out', id: ArrowId, mappedTo: ArrowId,
+        label?: StringLiteral, location: SourceLocation }
+       // X11[T1] — plug X11 подключён к туннелю T1; label по тем же правилам
+    | { kind: 'parent-x-mapped', id: ArrowId, mappedTo: ArrowId,
+        label?: StringLiteral, location: SourceLocation }
+       // X11[X22] — plug X11 подключён к own-described X родителя 'X22'
+       // (нужно когда декомпозиция глубже одного уровня и inner-block обязан
+       // "реализовать" то, что surfaces как O[X22] в boundary текущей активности);
+       // label по тем же правилам
 ```
 
 ## Комментарии

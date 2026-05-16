@@ -1,0 +1,39 @@
+{
+    // F5 поднимает Extension Development Host с собранным @idefy/vscode и открывает
+    // в нём папку @IDEFy (контекст с реальными .idef0 моделями). preLaunchTask
+    // запускает tsup в watch-режиме — первая сборка блокирует launch, потом следит
+    // за исходниками. После rebuild перезагрузи extension в EDH через Cmd+R
+    // (Developer: Reload Window).
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run @idefy/vscode (@IDEFy)",
+            "type": "extensionHost",
+            "request": "launch",
+            "runtimeExecutable": "${execPath}",
+            "args": [
+                "--extensionDevelopmentPath=${workspaceFolder}/packages/vscode",
+                "${userHome}/Library/CloudStorage/GoogleDrive-andrei.latyshau@gmail.com/My Drive/!МетаЛаб/ТехноЛаб/IDEFy"
+            ],
+            "outFiles": [
+                "${workspaceFolder}/packages/vscode/dist/**/*.js"
+            ],
+            "preLaunchTask": "watch:vscode",
+            "sourceMaps": true
+        },
+        {
+            "name": "Run @idefy/vscode (empty)",
+            "type": "extensionHost",
+            "request": "launch",
+            "runtimeExecutable": "${execPath}",
+            "args": [
+                "--extensionDevelopmentPath=${workspaceFolder}/packages/vscode"
+            ],
+            "outFiles": [
+                "${workspaceFolder}/packages/vscode/dist/**/*.js"
+            ],
+            "preLaunchTask": "watch:vscode",
+            "sourceMaps": true
+        }
+    ]
+}

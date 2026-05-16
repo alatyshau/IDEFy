@@ -6,13 +6,14 @@ import type {
     ProjectDescriptor,
 } from "./types.js";
 import { basename, dirname, isDescendant, join, normalize } from "./paths.js";
+import { IDEF0_SUFFIX, SIDECAR_SUFFIX } from "./sidecar.js";
 
 // Recognize an A0.*.idef0 marker file by name. Per spec/01-dsl.md filename
 // convention: ID is everything up to the first dot; rest before `.idef0` is
 // optional cosmetic. So we split by '.' and check that the first segment is
 // exactly 'A0' and the last is 'idef0'.
 function isA0MarkerFilename(name: string): boolean {
-    if (!name.endsWith(".idef0")) return false;
+    if (!name.endsWith(IDEF0_SUFFIX)) return false;
     const firstDot = name.indexOf(".");
     if (firstDot < 0) return false;
     return name.substring(0, firstDot) === "A0";
@@ -20,8 +21,8 @@ function isA0MarkerFilename(name: string): boolean {
 
 function isIdef0Filename(name: string): boolean {
     // `.idef0.ascii` sidecars are not idef0 source files.
-    if (name.endsWith(".idef0.ascii")) return false;
-    return name.endsWith(".idef0");
+    if (name.endsWith(SIDECAR_SUFFIX)) return false;
+    return name.endsWith(IDEF0_SUFFIX);
 }
 
 // Per packages/loader/spec/COMPONENT.md Errors section: missing path → empty

@@ -1,4 +1,4 @@
-# Boundary arrows sort by role (I, O, C, M), then by id within role.
+# Boundary arrows sort by group order I → C → M → O → T, then by id within group.
 
 activity A0 "boundary sort" {
     M1 "mech"

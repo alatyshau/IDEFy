@@ -1,0 +1,6 @@
+activity A2 "second" {
+    I1 "input"
+    O1 "video"
+
+    A21 "leaf" : I1 -> X211[O1]
+}

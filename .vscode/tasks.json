@@ -1,0 +1,61 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "watch:vscode",
+            "type": "shell",
+            "command": "pnpm",
+            "args": ["-F", "@idefy/vscode", "dev"],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "isBackground": true,
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "silent",
+                "panel": "dedicated",
+                "clear": false,
+                "showReuseMessage": false
+            },
+            "problemMatcher": [
+                {
+                    "owner": "tsup",
+                    "source": "tsup",
+                    "fileLocation": ["relative", "${workspaceFolder}/packages/vscode"],
+                    "pattern": [
+                        {
+                            "regexp": "^\\s*(?:ERROR|error):?\\s+(.+?):(\\d+):(\\d+):?\\s*(.+)$",
+                            "file": 1,
+                            "line": 2,
+                            "column": 3,
+                            "message": 4
+                        }
+                    ],
+                    "background": {
+                        "activeOnStart": true,
+                        "beginsPattern": "^.*(?:CLI\\s+Building|Build\\s+start).*$",
+                        "endsPattern": "^.*Build\\s+(?:success|failed).*$"
+                    }
+                }
+            ]
+        },
+        {
+            "label": "build:vscode",
+            "type": "shell",
+            "command": "pnpm",
+            "args": ["-F", "@idefy/vscode", "build"],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "reveal": "silent",
+                "panel": "dedicated",
+                "clear": true
+            },
+            "problemMatcher": []
+        }
+    ]
+}

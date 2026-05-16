@@ -1,0 +1,6 @@
+activity A1 "first" {
+    I1 "input"
+    O1 "audio"
+
+    A11 "leaf" : I1 -> X111[O1]
+}

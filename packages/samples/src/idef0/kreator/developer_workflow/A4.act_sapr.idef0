@@ -1,30 +1,32 @@
 # Сгенерировано из Kreator.xml, диаграмма 0.0.4.
+# Под inherit-ID моделью: I4 — flat parent input; I[X22] — sibling-X (parent's own-described X22 from A2);
+# O4 — flat parent O (parent сделал X41[O4]). ID и описания эхо-наследуются от A0 без локальной перенумерации.
 
 activity A4 "Актирование САПР" {
-    I1 "identified process"
-    I2 "act <identified process, input name, input value>"
-    O1 "show acted process' output"
+    I4 "act <identified process, input name, input value>"
+    I[X22] "identified process"
+    O4 "show acted process' output"
 
-    A41 "Актирование соответствующего входа" 
-        : I1, I2 
-        -> 
-            X411 "set <process name>", 
-            X412 "set <input>", 
-            X413 "set <output>", 
-            X414 "start <named process>", 
-            X415 "stop <identified process>", 
+    A41 "Актирование соответствующего входа"
+        : I4, I[X22]
+        ->
+            X411 "set <process name>",
+            X412 "set <input>",
+            X413 "set <output>",
+            X414 "start <named process>",
+            X415 "stop <identified process>",
             X416 "act <identified process, input name, input value>"
-    A42 "Проектирование ИС"                 
-        : I[X411], I[X412], I[X413] 
-        -> 
-            X421 "named process project", 
+    A42 "Проектирование ИС"
+        : I[X411], I[X412], I[X413]
+        ->
+            X421 "named process project",
             X422 "show named process project"
-    A43 "Запуск ИС"                         
-        : I[X414], I[X421] 
-        -> 
-            X431 "show identified process", 
+    A43 "Запуск ИС"
+        : I[X414], I[X421]
+        ->
+            X431 "show identified process",
             X432 "identified process"
-    A44 "Вывод соответствующего выхода" : I[X422], I[X431], I[X451], I[X461] -> X441[O1]
-    A45 "Останов ИС"                    : I[X432], I[X415] -> X451 "show stopped process"
-    A46 "Актирование ИС"                : I[X432], I[X416] -> X461 "show acted process' output"
+    A44 "Вывод соответствующего выхода"  : I[X422], I[X431], I[X451], I[X461] -> X441[O4]
+    A45 "Останов ИС"                     : I[X432], I[X415]                   -> X451 "show stopped process"
+    A46 "Актирование ИС"                 : I[X432], I[X416]                   -> X461 "show acted process' output"
 }

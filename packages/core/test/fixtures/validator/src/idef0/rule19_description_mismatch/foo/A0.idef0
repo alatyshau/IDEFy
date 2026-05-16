@@ -1,0 +1,6 @@
+activity A0 "Root" {
+    I1 "Original description"
+    O1 "Output description"
+
+    A1 "child" : I1 -> X11[O1]
+}

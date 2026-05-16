@@ -41,12 +41,45 @@ export interface Comment {
 }
 
 // ─── Boundary arrow (activity header) ─────────────────────────────────────────
+//
+// Per spec/01-dsl.md (inherit-ID model), boundary section can contain four
+// variants. Discriminated union — pattern-match on `kind`. See DATA_MODEL.md.
 
-export interface BoundaryArrow {
-    readonly id: ArrowId;
+export interface BoundaryArrowFlat {
+    readonly kind: "flat";
+    readonly role: "I" | "O" | "C" | "M";
+    readonly id: ArrowId; // I1, O1, C1, M1
     readonly description: StringLiteral;
     readonly location: SourceLocation;
 }
+
+export interface BoundaryArrowSiblingXConsumed {
+    readonly kind: "sibling-x-consumed";
+    readonly role: "I" | "C" | "M";
+    readonly sourceId: ArrowId; // X11 in I[X11], C[X11], M[X11]
+    readonly description: StringLiteral;
+    readonly location: SourceLocation;
+}
+
+export interface BoundaryArrowParentXOut {
+    readonly kind: "parent-x-out";
+    readonly sourceId: ArrowId; // X11 in O[X11]
+    readonly description: StringLiteral;
+    readonly location: SourceLocation;
+}
+
+export interface BoundaryArrowTunnel {
+    readonly kind: "tunnel";
+    readonly id: ArrowId; // T1 — flat, no role prefix
+    readonly description: StringLiteral;
+    readonly location: SourceLocation;
+}
+
+export type BoundaryArrow =
+    | BoundaryArrowFlat
+    | BoundaryArrowSiblingXConsumed
+    | BoundaryArrowParentXOut
+    | BoundaryArrowTunnel;
 
 // ─── Tunnel declaration (context header) ──────────────────────────────────────
 
@@ -63,6 +96,9 @@ export interface TunnelDecl {
 
 export interface RootReference {
     readonly targetId: ActivityId;
+    readonly leadingBlankLine: boolean;
+    readonly commentsAbove: readonly Comment[];
+    readonly commentsBelow: readonly Comment[];
     readonly location: SourceLocation;
 }
 
@@ -95,6 +131,7 @@ export interface ProducedArrowBoundaryOut {
     readonly kind: "boundary-out";
     readonly id: ArrowId; // X11
     readonly mappedTo: ArrowId; // O1
+    readonly label?: StringLiteral; // optional plug label, required at join (rule 21)
     readonly location: SourceLocation;
 }
 
@@ -102,13 +139,23 @@ export interface ProducedArrowTunnelOut {
     readonly kind: "tunnel-out";
     readonly id: ArrowId; // X11
     readonly mappedTo: ArrowId; // T1
+    readonly label?: StringLiteral; // optional plug label, required at join (rule 21)
+    readonly location: SourceLocation;
+}
+
+export interface ProducedArrowParentXMapped {
+    readonly kind: "parent-x-mapped";
+    readonly id: ArrowId; // X11 — local at this level
+    readonly mappedTo: ArrowId; // X22 — own-described X at parent level
+    readonly label?: StringLiteral; // optional plug label, required at join (rule 21)
     readonly location: SourceLocation;
 }
 
 export type ProducedArrowRef =
     | ProducedArrowNew
     | ProducedArrowBoundaryOut
-    | ProducedArrowTunnelOut;
+    | ProducedArrowTunnelOut
+    | ProducedArrowParentXMapped;
 
 // ─── Functional block ─────────────────────────────────────────────────────────
 

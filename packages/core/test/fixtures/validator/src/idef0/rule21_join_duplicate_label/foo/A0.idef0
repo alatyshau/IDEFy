@@ -1,0 +1,7 @@
+activity A0 "root" {
+    I1 "input"
+    O1 "output"
+
+    A1 "first"  : I1 -> X11[O1] "stream"
+    A2 "second" : I1 -> X21[O1] "stream"
+}

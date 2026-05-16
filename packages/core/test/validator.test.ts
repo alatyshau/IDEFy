@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
     isActivityId,
     isValidArrowId,
@@ -10,7 +12,8 @@ import {
     validate,
     validateOrphans,
 } from "../src/validator/validate.js";
-import { loadFixtureProject } from "./fixtures.js";
+import { assembleProject } from "../src/assembler/assemble.js";
+import { loadFixtureProject, readParsedFiles } from "./fixtures.js";
 
 describe("ids predicates: canonical (strict) vs well-formed (lenient)", () => {
     it("isActivityId is strict: rejects uppercase letters in suffix", () => {
@@ -159,6 +162,26 @@ describe("validator: rule 12 — context file presence and location", () => {
     });
 });
 
+describe("validator: rule 13 — raw folder segments (dot in folder name)", () => {
+    // REGRESSION: rule 13 validated collapsed-to-Java-package name. Folder
+    // segment `as.is` collapsed into the name `as.is` and the regex treated
+    // it as two valid segments `as` and `is`. Spec/01-dsl.md says dots in
+    // folder names are forbidden — must be caught BEFORE collapse.
+    it("fires when a raw folder segment contains a dot", () => {
+        const { project } = loadFixtureProject(
+            "validator",
+            "rule13_dot_in_folder/as.is/foo",
+        );
+        const diags = validate(project).filter(
+            (d) => d.ruleId === "validator.rule-13",
+        );
+        expect(diags.length).toBeGreaterThan(0);
+        expect(
+            diags.some((d) => /as\.is/.test(d.message)),
+        ).toBe(true);
+    });
+});
+
 describe("validator: rule 13/14 — project path structure", () => {
     it("invalid_path/Foo fires rule 13 (uppercase folder)", () => {
         const { project } = loadFixtureProject(
@@ -277,9 +300,13 @@ describe("validator: rule 4 — interface consistency between parent and child",
         const rule4 = validate(project).filter(
             (d) => d.ruleId === "validator.rule-4"
         );
-        expect(rule4.some((d) => /C-arrow 'C1'/.test(d.message))).toBe(true);
+        expect(rule4.some((d) => /'C1'/.test(d.message))).toBe(true);
     });
-    it("rule4_cardinality fires rule 4 for output cardinality mismatch", () => {
+    it("rule4_cardinality fires rule 4 when child boundary lacks O[X*] for own-described X parent", () => {
+        // Under inherit-ID model the old "cardinality slack" check is dropped:
+        // every own-described X at parent has a per-ID counterpart O[X*] at
+        // child boundary. The fixture's parent declares X12 "extra" without a
+        // matching O[X12] in child — must fire rule 4 missing-entry.
         const { project } = loadFixtureProject(
             "validator",
             "rule4_cardinality/foo"
@@ -288,8 +315,164 @@ describe("validator: rule 4 — interface consistency between parent and child",
             (d) => d.ruleId === "validator.rule-4"
         );
         expect(
-            rule4.some((d) => /produces 2 output arrow/.test(d.message))
+            rule4.some((d) => /O\[X12\]/.test(d.message))
         ).toBe(true);
+    });
+});
+
+describe("validator: rule 19 — description-identity (inherit-ID)", () => {
+    it("fires when child boundary description diverges from owner-level description", () => {
+        const { project } = loadFixtureProject(
+            "validator",
+            "rule19_description_mismatch/foo"
+        );
+        const rule19 = validate(project).filter(
+            (d) => d.ruleId === "validator.rule-19"
+        );
+        expect(
+            rule19.some((d) => /DIFFERENT description/.test(d.message))
+        ).toBe(true);
+    });
+});
+
+describe("validator: rule 20 — tunnel-in-boundary", () => {
+    it("fires when a tunnel is used inside an activity but not declared in its boundary", () => {
+        const { project } = loadFixtureProject(
+            "validator",
+            "rule20_tunnel_missing/foo"
+        );
+        const rule20 = validate(project).filter(
+            (d) => d.ruleId === "validator.rule-20"
+        );
+        expect(
+            rule20.some(
+                (d) =>
+                    d.severity === "error" && /T1/.test(d.message)
+            )
+        ).toBe(true);
+    });
+
+    it("emits a warning when a tunnel is declared in boundary but never used inside", () => {
+        const { project } = loadFixtureProject(
+            "validator",
+            "rule20_tunnel_unused/foo"
+        );
+        const rule20 = validate(project).filter(
+            (d) => d.ruleId === "validator.rule-20"
+        );
+        expect(
+            rule20.some(
+                (d) =>
+                    d.severity === "warning" &&
+                    /T2/.test(d.message) &&
+                    /never used/i.test(d.message),
+            ),
+        ).toBe(true);
+    });
+});
+
+describe("validator: rule 21 — plug labels at join", () => {
+    it("fires error when a single plug carries a label (label forbidden without join)", () => {
+        const { project } = loadFixtureProject(
+            "validator",
+            "rule21_label_on_single/foo"
+        );
+        const rule21 = validate(project).filter(
+            (d) => d.ruleId === "validator.rule-21"
+        );
+        expect(rule21.length).toBeGreaterThan(0);
+        expect(
+            rule21.some((d) => /only plug.*label is forbidden/.test(d.message))
+        ).toBe(true);
+    });
+
+    it("fires error when a join has at least one plug without label", () => {
+        const { project } = loadFixtureProject(
+            "validator",
+            "rule21_join_missing_label/foo"
+        );
+        const rule21 = validate(project).filter(
+            (d) => d.ruleId === "validator.rule-21"
+        );
+        expect(
+            rule21.some((d) => /must have a label/.test(d.message))
+        ).toBe(true);
+    });
+
+    it("fires error when two plugs at the same socket share a label", () => {
+        const { project } = loadFixtureProject(
+            "validator",
+            "rule21_join_duplicate_label/foo"
+        );
+        const rule21 = validate(project).filter(
+            (d) => d.ruleId === "validator.rule-21"
+        );
+        expect(
+            rule21.some((d) => /duplicated/.test(d.message))
+        ).toBe(true);
+    });
+
+    it("passes when a join has every plug labelled with unique label", () => {
+        const { project } = loadFixtureProject(
+            "validator",
+            "rule21_join_ok/foo"
+        );
+        const rule21 = validate(project).filter(
+            (d) => d.ruleId === "validator.rule-21"
+        );
+        expect(rule21).toEqual([]);
+    });
+});
+
+describe("validator: rule 22 — X↔O nomenclature", () => {
+    it("fires when a plug id does not follow X{block_suffix}{output_index}", () => {
+        const { project } = loadFixtureProject(
+            "validator",
+            "rule22_xo_nomenclature/foo"
+        );
+        const rule22 = validate(project).filter(
+            (d) => d.ruleId === "validator.rule-22"
+        );
+        expect(
+            rule22.some(
+                (d) => /expected 'X11'/.test(d.message) && /X22/.test(d.message)
+            )
+        ).toBe(true);
+    });
+});
+
+describe("validator: @idefy/samples smoke — both reference projects validate clean", () => {
+    const SAMPLES_SCAN_ROOT = path.join(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "..",
+        "..",
+        "samples",
+        "src",
+        "idef0"
+    );
+    const PROJECTS = [
+        ["hr.recruitment", "hr/recruitment"],
+        ["kreator.developer_workflow", "kreator/developer_workflow"],
+    ] as const;
+    it.each(PROJECTS)("%s — no error diagnostics", (_name, rel) => {
+        const projectRoot = path.join(SAMPLES_SCAN_ROOT, rel);
+        const files = readParsedFiles(projectRoot);
+        const { project } = assembleProject(
+            files,
+            SAMPLES_SCAN_ROOT,
+            projectRoot
+        );
+        if (!project) throw new Error("project assembly failed");
+        const errors = validate(project).filter(
+            (d) => d.severity === "error"
+        );
+        if (errors.length > 0) {
+            console.log(
+                "errors:",
+                errors.map((d) => `${d.ruleId}: ${d.message}`).join("\n")
+            );
+        }
+        expect(errors).toEqual([]);
     });
 });
 

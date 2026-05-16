@@ -1,0 +1,5 @@
+context A-0 "ctx" {
+    T1 "Some tunnel description"
+
+    ...A0
+}

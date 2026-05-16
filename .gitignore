@@ -14,6 +14,10 @@ coverage/
 # the VS Code extension auto-regenerates them on format).
 *.idef0.ascii
 
+# Integration-test output: showcase samples auto-formatted by the integration
+# test on every run. Source-of-truth is the matching `raw/` folder.
+packages/samples/src/idef0/showcase/*/formatted/
+
 # Logs
 *.log
 npm-debug.log*

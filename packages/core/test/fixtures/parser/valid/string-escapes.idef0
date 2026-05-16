@@ -1,0 +1,9 @@
+# Per spec/01-dsl.md «Строковые литералы»: only `\"` and `\\` are valid
+# escapes. Everything else (`\n`, `\t`) — backslash stays literal.
+
+activity A0 "with \"quote\" and \\ backslash" {
+    I1 "input with \"quoted\" word"
+    O1 "C:\\Path\\To\\Thing"
+
+    A1 "child" : I1 -> X11[O1]
+}

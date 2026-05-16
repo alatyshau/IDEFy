@@ -116,9 +116,11 @@ describe("buildAsciiViewerHtml", () => {
 });
 
 describe("generateNonce", () => {
-    it("produces 32-char alphanumeric strings", () => {
+    it("produces a base64url-safe nonce of fixed length", () => {
         const n = generateNonce();
-        expect(n).toMatch(/^[A-Za-z0-9]{32}$/);
+        // 24 random bytes encoded as base64url (no padding) → 32 chars from
+        // the URL-safe alphabet [A-Za-z0-9_-]. See generateNonce() doc.
+        expect(n).toMatch(/^[A-Za-z0-9_-]{32}$/);
     });
 
     it("produces different values across calls", () => {

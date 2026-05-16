@@ -1,0 +1,7 @@
+# Per spec/01-dsl.md: literal newline inside a string literal is an error
+# (multi-line strings are not allowed).
+
+activity A0 "root" {
+    I1 "broken
+literal"
+}

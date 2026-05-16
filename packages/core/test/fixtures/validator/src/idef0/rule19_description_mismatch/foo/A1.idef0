@@ -1,0 +1,4 @@
+activity A1 "child" {
+    I1 "DIFFERENT description"
+    O1 "Output description"
+}

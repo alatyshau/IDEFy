@@ -31,6 +31,18 @@ import { CharStream } from "./char-stream.js";
 
 const BOUNDARY_ROLES: ReadonlySet<ArrowRole> = new Set(["I", "O", "C", "M"]);
 const TUNNEL_ROLES: ReadonlySet<ArrowRole> = new Set(["T"]);
+// In inherit-ID model, activity boundary may also include tunnel entries
+// (flat T*, per spec/01-dsl.md tunnel-in-boundary rule).
+const ACTIVITY_BOUNDARY_TUNNEL_ROLES: ReadonlySet<ArrowRole> = new Set(["T"]);
+// Boundary bracket-form outer roles (I[X*]/C[X*]/M[X*] consumed, O[X*] produced).
+const BOUNDARY_BRACKET_CONSUMED_ROLES: ReadonlySet<ArrowRole> = new Set([
+    "I",
+    "C",
+    "M",
+]);
+const BOUNDARY_BRACKET_PRODUCED_ROLES: ReadonlySet<ArrowRole> = new Set(["O"]);
+// Inner of boundary bracket forms is always X (own-described X at ancestor).
+const BOUNDARY_BRACKET_INNER_ROLES: ReadonlySet<ArrowRole> = new Set(["X"]);
 const CONSUMED_PARENT_ROLES: ReadonlySet<ArrowRole> = new Set(["I", "C", "M"]);
 const CONSUMED_SIBLING_OUTER_ROLES: ReadonlySet<ArrowRole> = new Set([
     "I",
@@ -40,7 +52,23 @@ const CONSUMED_SIBLING_OUTER_ROLES: ReadonlySet<ArrowRole> = new Set([
 const CONSUMED_SIBLING_INNER_ROLES: ReadonlySet<ArrowRole> = new Set(["X", "T"]);
 const PRODUCED_NEW_ROLES: ReadonlySet<ArrowRole> = new Set(["X"]);
 const PRODUCED_OUTER_ROLES: ReadonlySet<ArrowRole> = new Set(["X"]);
-const PRODUCED_BRACKET_ROLES: ReadonlySet<ArrowRole> = new Set(["O", "T"]);
+const PRODUCED_BRACKET_ROLES: ReadonlySet<ArrowRole> = new Set(["O", "T", "X"]);
+
+// Source-text reconstruction of a BoundaryArrow id for diagnostic messages.
+// (BoundaryArrow is a discriminated union — different variants carry different
+// id fields, see types.ts.)
+function boundaryArrowDisplay(arrow: BoundaryArrow): string {
+    switch (arrow.kind) {
+        case "flat":
+            return arrow.id;
+        case "sibling-x-consumed":
+            return `${arrow.role}[${arrow.sourceId}]`;
+        case "parent-x-out":
+            return `O[${arrow.sourceId}]`;
+        case "tunnel":
+            return arrow.id;
+    }
+}
 
 type ContainerKind = "activity" | "context";
 
@@ -77,7 +105,10 @@ interface RawTunnel {
 }
 interface RawRootRef {
     readonly kind: "rootRef";
-    readonly rootRef: RootReference;
+    readonly rootRef: Omit<
+        RootReference,
+        "leadingBlankLine" | "commentsAbove" | "commentsBelow"
+    >;
     readonly startLine: number;
     readonly endLine: number;
 }
@@ -91,17 +122,24 @@ function isAtStartOfDecl(stream: CharStream, container: ContainerKind): boolean 
     const c = stream.peek();
     if (c === null) return false;
     if (container === "activity") {
-        // I/O/C/M (boundary) and A (functional decomposition) are start-literals.
-        // X and T at line-start are NOT start-of-decl — X never appears as
-        // top-level; T is wrong-container (parser treats it as continuation, the
-        // separate parseDeclarationItem dispatch catches misplaced tunnel).
+        // I/O/C/M/T (boundary) and A (functional decomposition) are
+        // start-literals. T at start in activity body marks a tunnel echo in
+        // boundary (inherit-ID model, see spec/01-dsl.md). X never appears at
+        // top-level.
         //
         // Suffix alphabet is `[1-9a-z]` per spec/01-dsl.md; the heuristic also
         // accepts `0` (for the `A0` root form, when it appears) and uppercase
         // letters so that misspellings like `AA` still get recognised as
         // declaration starts — the validator then emits rule-8 with a precise
         // location instead of letting the line collapse into a continuation.
-        if (c === "I" || c === "O" || c === "C" || c === "M" || c === "A") {
+        if (
+            c === "I" ||
+            c === "O" ||
+            c === "C" ||
+            c === "M" ||
+            c === "T" ||
+            c === "A"
+        ) {
             const c2 = stream.peekAhead(1);
             return c2 !== null && /[A-Za-z0-9-]/.test(c2);
         }
@@ -177,14 +215,21 @@ function validateArrowAt(
     positionLabel: string
 ): void {
     if (!isWellFormedArrowIdInRoles(id, allowedRoles)) {
-        const reason = isWellFormedArrowId(id)
-            ? `role '${id.charAt(0)}' is not allowed here`
-            : "id must match <role-letter><suffix using 1..9, a..z>";
+        const isStructural = !isWellFormedArrowId(id);
+        const reason = isStructural
+            ? "id must match <role-letter><suffix using 1..9, a..z>"
+            : `role '${id.charAt(0)}' is not allowed here`;
         const rolesStr = [...allowedRoles].join("/");
+        // Per spec/04-validator.md rule 8: structurally invalid arrow IDs are
+        // an error-grade violation and are owned by rule 8. Even though the
+        // diagnostic is emitted from parser-time, it carries the rule-8
+        // attribution so consumers can group/filter consistently with the
+        // case-violation warnings that the validator emits.
         addError(
             errors,
             location,
-            `${positionLabel}: arrow id '${id}' invalid (${reason}; expected ${rolesStr}*)`
+            `${positionLabel}: arrow id '${id}' invalid (${reason}; expected ${rolesStr}*)`,
+            isStructural ? "validator.rule-8" : undefined,
         );
     }
 }
@@ -198,7 +243,11 @@ function parseActivity(
     filenameId: FileId | undefined,
     errors: Diagnostic[]
 ): ActivityAST | null {
-    consumeInlineWhitespace(stream);
+    // Per spec/01-dsl.md «Continuation lines (строки, не начинающиеся со
+    // start-литерала) — продолжение предыдущей декларации». Этот же принцип
+    // применим к шапке: между ключевым словом, id, name-литералом и `{`
+    // переносы строк допустимы наравне с пробелами/табами.
+    consumeWhitespaceMultilineForDecl(stream);
     const idTok = readWord(stream);
     if (idTok === null) {
         addError(
@@ -208,7 +257,7 @@ function parseActivity(
         );
         return null;
     }
-    consumeInlineWhitespace(stream);
+    consumeWhitespaceMultilineForDecl(stream);
     const nameLit = parseStringLiteralRequired(stream, errors);
     if (nameLit === null) return null;
 
@@ -260,7 +309,8 @@ function parseContext(
     filenameId: FileId | undefined,
     errors: Diagnostic[]
 ): ContextAST | null {
-    consumeInlineWhitespace(stream);
+    // Multi-line header (см. parseActivity для обоснования).
+    consumeWhitespaceMultilineForDecl(stream);
     const idTok = readWord(stream);
     if (idTok === null) {
         addError(
@@ -277,7 +327,7 @@ function parseContext(
             `Context ID must be 'A-0', found '${idTok.value}'`
         );
     }
-    consumeInlineWhitespace(stream);
+    consumeWhitespaceMultilineForDecl(stream);
     const nameLit = parseStringLiteralRequired(stream, errors);
     if (nameLit === null) return null;
 
@@ -387,9 +437,50 @@ function parseDeclarationItem(
         );
         return null;
     }
-    consumeInlineWhitespace(stream);
+
+    // Check for boundary bracket-form: <outer-role>[<sourceId>] "description"
+    // (valid in activity boundary section per spec/01-dsl.md inherit-ID model:
+    // I[X*]/C[X*]/M[X*] for sibling-X-consumed, O[X*] for parent-X-out).
+    //
+    // Per spec/01-dsl.md continuation rule, multi-line whitespace is allowed
+    // between the id, the optional `[...]` group, and the description literal —
+    // anything that isn't a start-of-decl token may follow.
+    let bracketInner: { value: string; location: SourceLocation } | null = null;
+    consumeWhitespaceMultilineForDecl(stream);
+    if (stream.peek() === "[") {
+        stream.next();
+        const inner = readWord(stream);
+        if (!inner) {
+            addError(
+                errors,
+                stream.locationOfCurrent(),
+                "Expected arrow id inside '[...]'"
+            );
+            return null;
+        }
+        if (!consumeChar(stream, "]")) {
+            addError(
+                errors,
+                stream.locationOfCurrent(),
+                "Expected ']' after arrow id"
+            );
+            return null;
+        }
+        bracketInner = inner;
+        consumeWhitespaceMultilineForDecl(stream);
+    }
+
     const nameLit = parseStringLiteralRequired(stream, errors);
     if (!nameLit) return null;
+
+    // Фиксируем endLine ИМЕННО на месте закрытия литерала. Дальше нам нужно
+    // подсмотреть `:` (functional block) через multi-line whitespace, и эта
+    // consumeWhitespaceMultilineForDecl сдвигает stream.position.line вперёд
+    // вплоть до следующего start-литерала. Если бы мы брали endLine из
+    // stream.position после lookahead, declarations типа `T2 "..."` начали бы
+    // «занимать» строки до следующей декларации, что ломает splitGroups (gap
+    // между группами становится 0, комментарии прилипают не к тем блокам).
+    const literalEndLine = nameLit.location.range.end.line;
 
     // After name, look at the next non-whitespace character. ONLY `:` makes this
     // a functional block declaration (which has consumed/produced lists). Anything
@@ -399,6 +490,14 @@ function parseDeclarationItem(
     consumeWhitespaceMultilineForDecl(stream);
     if (stream.peek() === ":") {
         stream.next();
+        if (bracketInner !== null) {
+            addError(
+                errors,
+                idTok.location,
+                "Functional block id cannot use bracket form '<role>[<id>]'"
+            );
+            return null;
+        }
         if (!isWellFormedActivityId(idTok.value)) {
             addError(
                 errors,
@@ -415,8 +514,82 @@ function parseDeclarationItem(
             container
         );
     }
-    // Boundary arrow or tunnel decl — pick by role letter.
-    const endLine = stream.position.line;
+    const endLine = literalEndLine;
+
+    // Bracket-form boundary entry.
+    if (bracketInner !== null) {
+        if (container !== "activity") {
+            addError(
+                errors,
+                idTok.location,
+                "Bracket-form arrow is not allowed in context body"
+            );
+            return null;
+        }
+        // Outer letter must be a single role I/C/M (sibling-X-consumed) or O
+        // (parent-X-out). Inner must be X*.
+        let outerRole: ArrowRole;
+        try {
+            outerRole = roleOf(idTok.value);
+        } catch {
+            addError(
+                errors,
+                idTok.location,
+                `Invalid boundary bracket-form outer role '${idTok.value}' (expected I/C/M/O)`
+            );
+            return null;
+        }
+        if (idTok.value.length !== 1) {
+            addError(
+                errors,
+                idTok.location,
+                `Boundary bracket-form outer must be a single role letter, got '${idTok.value}'`
+            );
+        }
+        validateArrowAt(
+            bracketInner.value,
+            BOUNDARY_BRACKET_INNER_ROLES,
+            bracketInner.location,
+            errors,
+            "Boundary bracket inner"
+        );
+        if (BOUNDARY_BRACKET_CONSUMED_ROLES.has(outerRole)) {
+            return {
+                kind: "boundary",
+                arrow: {
+                    kind: "sibling-x-consumed",
+                    role: outerRole as "I" | "C" | "M",
+                    sourceId: bracketInner.value,
+                    description: nameLit,
+                    location: combineLocation(idTok.location, stream.position),
+                },
+                startLine,
+                endLine,
+            };
+        }
+        if (BOUNDARY_BRACKET_PRODUCED_ROLES.has(outerRole)) {
+            return {
+                kind: "boundary",
+                arrow: {
+                    kind: "parent-x-out",
+                    sourceId: bracketInner.value,
+                    description: nameLit,
+                    location: combineLocation(idTok.location, stream.position),
+                },
+                startLine,
+                endLine,
+            };
+        }
+        addError(
+            errors,
+            idTok.location,
+            `Boundary bracket-form outer role must be I/C/M/O, got '${outerRole}'`
+        );
+        return null;
+    }
+
+    // Flat form. T* in context body → tunnel decl; T* in activity body →
+    // BoundaryArrowTunnel (echo per spec/01-dsl.md tunnel-in-boundary).
     if (idTok.value.startsWith("T")) {
         validateArrowAt(
             idTok.value,
@@ -425,6 +598,19 @@ function parseDeclarationItem(
             errors,
             "Tunnel declaration"
         );
+        if (container === "activity") {
+            return {
+                kind: "boundary",
+                arrow: {
+                    kind: "tunnel",
+                    id: idTok.value,
+                    description: nameLit,
+                    location: combineLocation(idTok.location, stream.position),
+                },
+                startLine,
+                endLine,
+            };
+        }
         return {
             kind: "tunnel",
             tunnel: {
@@ -436,6 +622,7 @@ function parseDeclarationItem(
             endLine,
         };
     }
+    // Flat I*/O*/C*/M* boundary in activity body.
     validateArrowAt(
         idTok.value,
         BOUNDARY_ROLES,
@@ -443,9 +630,22 @@ function parseDeclarationItem(
         errors,
         "Boundary arrow"
     );
+    let flatRole: ArrowRole;
+    try {
+        flatRole = roleOf(idTok.value);
+    } catch {
+        addError(
+            errors,
+            idTok.location,
+            `Invalid boundary arrow id '${idTok.value}'`
+        );
+        return null;
+    }
     return {
         kind: "boundary",
         arrow: {
+            kind: "flat",
+            role: flatRole as "I" | "O" | "C" | "M",
             id: idTok.value,
             description: nameLit,
             location: combineLocation(idTok.location, stream.position),
@@ -512,13 +712,17 @@ function parseFunctionalBlockRest(
 
     consumeWhitespaceMultilineForDecl(stream);
     const produced: ProducedArrowRef[] = [];
-    // Pre-check ONLY for the unambiguous "no produced at all" cases (`}` /
-    // end-of-body / EOF). For `start-of-decl` we don't bail early — that token
-    // may actually be a user-intended produced item with a wrong role (e.g.,
-    // `-> O1 "..."`), and parseProducedRef emits a more specific diagnostic
-    // about the role being invalid for the produced position.
+    // Pre-check: distinguish "no produced at all" from "produced list begins
+    // with something we can attempt to parse". `}` / EOF / `#` (mid-decl
+    // comment terminator per spec/01-dsl.md) all mean the block has produced
+    // nothing — that's a clear "must produce at least one arrow" error and
+    // bailing here gives the precise diagnostic. We DON'T bail on
+    // start-of-decl literals (`A*` / `I*` / `O*` / ...): those may be a typo'd
+    // produced item with a wrong role (e.g. `-> O1 "..."`), and
+    // parseProducedRef emits a more specific role-mismatch diagnostic. So the
+    // pre-check explicitly excludes start-of-decl tokens.
     const c2 = stream.peek();
-    if (c2 === null || c2 === "}") {
+    if (c2 === null || c2 === "}" || c2 === "#") {
         addError(
             errors,
             stream.locationOfCurrent(),
@@ -727,15 +931,36 @@ function parseProducedRef(
         } catch {
             return null;
         }
+        // Optional plug label: bracket-form may be followed by `"label"`.
+        // The label terminates with the next produced separator (`,`), end of
+        // declaration, or `}`. Parsing is non-greedy — we peek for `"` only.
+        // Per spec/04-validator.md rule 21, label is required at join and
+        // forbidden otherwise; validator enforces the structural constraint.
+        let label: StringLiteral | undefined;
+        {
+            // Look ahead past inline whitespace (and continuation newlines) for `"`.
+            // We DO consume the whitespace if a `"` follows — otherwise the parser
+            // would treat the next-token search for `,` / start-of-decl ambiguously.
+            // Snapshot is unnecessary: if we don't see `"`, the only thing consumed
+            // is whitespace, which would have been consumed by the caller anyway
+            // before testing the next separator.
+            consumeWhitespaceMultilineForDecl(stream);
+            if (stream.peek() === '"') {
+                const lit = parseStringLiteralRequired(stream, errors);
+                if (lit) label = lit;
+            }
+        }
+        const endLoc = combineLocation(
+            { file: stream.filePath, range: { start: startPos, end: startPos } },
+            stream.position
+        );
         if (innerRole === "O") {
             return {
                 kind: "boundary-out",
                 id: idTok.value,
                 mappedTo: inner.value,
-                location: combineLocation(
-                    { file: stream.filePath, range: { start: startPos, end: startPos } },
-                    stream.position
-                ),
+                ...(label !== undefined ? { label } : {}),
+                location: endLoc,
             };
         }
         if (innerRole === "T") {
@@ -743,10 +968,17 @@ function parseProducedRef(
                 kind: "tunnel-out",
                 id: idTok.value,
                 mappedTo: inner.value,
-                location: combineLocation(
-                    { file: stream.filePath, range: { start: startPos, end: startPos } },
-                    stream.position
-                ),
+                ...(label !== undefined ? { label } : {}),
+                location: endLoc,
+            };
+        }
+        if (innerRole === "X") {
+            return {
+                kind: "parent-x-mapped",
+                id: idTok.value,
+                mappedTo: inner.value,
+                ...(label !== undefined ? { label } : {}),
+                location: endLoc,
             };
         }
         return null;
@@ -950,6 +1182,19 @@ function parseStringLiteralRequired(
 
 // ─── Word / identifier ───────────────────────────────────────────────────────
 
+// readWord — лексер уровень. Собирает identifier-токен по char-class.
+//
+// Дефис `-` — спец-кейс. Он не входит в обычный word-char класс, чтобы не
+// рвать грамматические разделители вроде `->`. Единственное место в DSL,
+// где `-` встречается внутри идентификатора, — литерал контекстного id
+// `A-0`. Соответственно `-` допустим **только** на позиции 1, и только
+// если первый прочитанный символ — `A`. В любой другой позиции `-`
+// завершает токен.
+//
+// Это структурное правило (а не lookahead-патч): любые `-`-начатые
+// разделители в будущем работают без правок лексера. Валидация того, что
+// после `A-` идёт именно `0` (т.е. полный токен — это `A-0`, а не `A-1` /
+// `A-foo`), — задача парсера/валидатора, не лексера.
 function readWord(
     stream: CharStream
 ): { value: string; location: SourceLocation } | null {
@@ -959,6 +1204,15 @@ function readWord(
     while (!stream.isAtEnd()) {
         const c = stream.peek();
         if (c === null) break;
+        if (c === "-") {
+            // `-` принимается ровно на позиции 1 после ведущего `A`.
+            if (buf === "A") {
+                buf += c;
+                stream.next();
+                continue;
+            }
+            break;
+        }
         if (isWordChar(c)) {
             buf += c;
             stream.next();
@@ -973,7 +1227,7 @@ function readWord(
 }
 
 function isWordChar(c: string): boolean {
-    return /[A-Za-z0-9_\-]/.test(c);
+    return /[A-Za-z0-9_]/.test(c);
 }
 
 // ─── Whitespace and comment skipping (pre/post header) ───────────────────────
@@ -1069,7 +1323,8 @@ function syncToEol(stream: CharStream): void {
 function addError(
     errors: Diagnostic[],
     location: SourceLocation,
-    message: string
+    message: string,
+    ruleId?: string,
 ): void {
     errors.push({
         severity: "error",
@@ -1077,6 +1332,7 @@ function addError(
         range: location.range,
         file: location.file,
         message,
+        ...(ruleId !== undefined ? { ruleId } : {}),
     });
 }
 
@@ -1278,7 +1534,7 @@ function classifyContextItems(
                     addError(
                         errors,
                         it.arrow.location,
-                        `Boundary arrow '${it.arrow.id}' is not allowed inside 'context A-0' body — boundary arrows live in the activity file`
+                        `Boundary arrow '${boundaryArrowDisplay(it.arrow)}' is not allowed inside 'context A-0' body — boundary arrows live in the activity file`
                     );
                 } else if (it.kind === "block") {
                     addError(
@@ -1301,7 +1557,7 @@ function classifyContextItems(
                     addError(
                         errors,
                         it.arrow.location,
-                        `Boundary arrow '${it.arrow.id}' is not allowed inside 'context A-0' body`
+                        `Boundary arrow '${boundaryArrowDisplay(it.arrow)}' is not allowed inside 'context A-0' body`
                     );
                 } else if (it.kind === "block") {
                     addError(
@@ -1322,7 +1578,7 @@ function classifyContextItems(
                         addError(
                             errors,
                             it.arrow.location,
-                            `Boundary arrow '${it.arrow.id}' is not allowed inside 'context A-0' body`
+                            `Boundary arrow '${boundaryArrowDisplay(it.arrow)}' is not allowed inside 'context A-0' body`
                         );
                     } else if (it.kind === "block") {
                         addError(
@@ -1341,10 +1597,20 @@ function classifyContextItems(
                     commentsBelow,
                 });
             } else if (anchorItem.kind === "rootRef") {
-                if (rootRef === null) rootRef = anchorItem.rootRef;
-                // Stray comments around rootRef: attach as floating if not first/last anchor.
-                for (const c of commentsAbove) floating.push(c);
-                for (const c of commentsBelow) floating.push(c);
+                if (rootRef === null) {
+                    rootRef = {
+                        ...anchorItem.rootRef,
+                        leadingBlankLine: ai === 0 ? group.leadingBlank : false,
+                        commentsAbove,
+                        commentsBelow,
+                    };
+                } else {
+                    // Duplicate rootRef declarations — secondary occurrences keep
+                    // their sticky comments only on the duplicate (which won't be
+                    // emitted), so push them to floating to avoid silent loss.
+                    for (const c of commentsAbove) floating.push(c);
+                    for (const c of commentsBelow) floating.push(c);
+                }
             }
             cursor = anchorIndex + 1;
         }

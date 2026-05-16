@@ -1,30 +1,21 @@
 # Сгенерировано из Kreator.xml, диаграмма 0.0.1.
-# В исходном XML четыре блока этой декомпозиции были без имён; имена ниже
-# восстановлены по стрелкам диаграммы и определению активности "Проектирование САПР".
-# XML definition:
-# set process name = "САПР"
-# set process output = [process instance]
-# set process input = ["process name", "process output", "process input"]
+# Под inherit-ID моделью: ID и описания протаскиваются от A0 без локальной перенумерации.
+# O1 — это plain parent-O (родитель сделал X11[O1]); O[X12] — bracket boundary (родитель сделал X12 "...").
 
 activity A1 "Проектирование САПР" {
     I1 "set process project"
-    O1 "show named process project"
-    O2 "named process project"
     C1 "PSL"
+    O1 "show named process project"
+    O[X12] "named process project"
 
-    A11 "Разбор проекта процесса" 
+    A11 "Разбор проекта процесса"
         : I1, C1
         ->
-            X111 "set <process name>", 
-            X112 "set <input>", 
-            X113 "set <output>", 
+            X111 "set <process name>",
+            X112 "set <input>",
+            X113 "set <output>",
             X114 "kind"
-
-    A12 "Задание имени процесса" : I[X111], I[X114], C1 -> X121 "Процесс с заданным именем"
-
-    A13 "Задание входов и выходов процесса" 
-        : I[X112], I[X113], I[X114], C1 
-        ->  X131 "Спецификация входов и выходов процесса"
-
-    A14 "Сборка проекта именованного процесса" : I[X121], I[X131], C1 -> X141[O1], X142[O2]
+    A12 "Задание имени процесса"             : I[X111], I[X114], C1            -> X121 "Процесс с заданным именем"
+    A13 "Задание входов и выходов процесса"  : I[X112], I[X113], I[X114], C1   -> X131 "Спецификация входов и выходов процесса"
+    A14 "Сборка проекта именованного процесса" : I[X121], I[X131], C1 -> X141[O1], X142[X12]
 }

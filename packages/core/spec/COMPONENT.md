@@ -68,7 +68,20 @@ AssembleResult {
 
 Project assembler **не парсит** — он работает над уже распарсенными файлами. Это нужно, чтобы `@idefy/vscode` мог кэшировать ParsedFile между вызовами и пересобирать проект инкрементально при изменении одного файла.
 
-**Best-effort политика.** При отсутствии A0 / A-0, дубликате id, лишнем context-файле и т. п. assembler возвращает частично собранный `IdefProject` плюс диагностики в `errors`, а не `null`. `null` — только когда вход пуст. Это даёт `@idefy/vscode` live-friendly поведение: пользователь видит и проблему (через диагностики), и то, что уже собралось (через model).
+**Best-effort политика.** Assembler возвращает частично собранный `IdefProject` для любого непустого входа; `null` — только когда `files == []`. Это даёт `@idefy/vscode` live-friendly поведение: пользователь видит и то, что уже собралось (через model), и проблему.
+
+**Разделение диагностик между assembler и validator:**
+
+- **`AssembleResult.errors` (source: `'assembler'`)** покрывает структурные конфликты, которые валидатор не может увидеть в собранной модели (потому что вторая версия конфликтующего узла отбрасывается во время сборки):
+  - Duplicate context-файл (`A-0`) в одном проекте.
+  - Duplicate activity id (две `A?.idef0` со одним id).
+- **`validate(project)` (source: `'validator'`, с `ruleId`)** покрывает структурные правила, которые видны на собранной модели — в частности, **отсутствие** обязательных файлов:
+  - Rule 11 — нет `A0`.
+  - Rule 12 — нет `A-0`.
+  
+  Этих диагностик assembler НЕ дублирует — единственный источник правды по ним — validator.
+
+Caller (`@idefy/vscode`) объединяет оба источника без дедупликации: они покрывают непересекающиеся факты.
 
 ### Валидатор
 
@@ -80,7 +93,7 @@ diagnosticsForNestedProjects(markers: NestedProjectMarker[]): Diagnostic[]
 NestedProjectMarker = same shape as @idefy/loader's NestedProjectMarker.
 ```
 
-`validate(project)` применяет правила из [`spec/04-validator.md`](../../../spec/04-validator.md), **не помеченные `[TODO]`** и **проверяемые в границах одного проекта**: правила **4, 7–14, 17, 18**. Правила 1–3 (ICOM-согласованность) и 5–6 (туннели) — `[TODO]`, не реализуются.
+`validate(project)` применяет правила из [`spec/04-validator.md`](../../../spec/04-validator.md), **не помеченные `[TODO]`** и **проверяемые в границах одного проекта**: правила **4, 7–14, 17, 18, 19, 20, 21, 22**. Правила 1–3 (ICOM-согласованность) и 5–6 (туннели — usage/exclusivity) — `[TODO]`, не реализуются. Правило 4 переписано под inherit-ID модель (per-ID exact match всех форм boundary). Правила 19 (description-identity), 20 (tunnel-in-boundary), 21 (plug labels при join), 22 (X↔O nomenclature) добавлены последовательными итерациями по мере формализации plug/socket дихотомии.
 
 `validateOrphans(orphanFilePaths)` реализует правило 16 («Принадлежность файла проекту»): для каждого пути из списка генерирует Diagnostic с `severity: 'error'`, `ruleId: 'validator.rule-16'`, `file: <path>`, range — на первой строке, сообщение «`.idef0` file under `src/idef0/` but outside any project root». Список orphan-файлов поставляет caller (`@idefy/vscode` через [`@idefy/loader`](../../loader/spec/COMPONENT.md) → `discoverProjects().orphans`).
 
@@ -107,6 +120,19 @@ FormatOptions {
 ### Renderer registry
 
 См. [`RENDERERS.md`](RENDERERS.md).
+
+### ID utilities (public)
+
+Дополнительно `@idefy/core` экспортирует из корня небольшой набор helper-функций для работы с идентификаторами стрелок и активностей — публичный API для caller'ов, которые валидируют пользовательский ввод или строят cross-file навигацию по AST:
+
+```
+roleOf(id: ArrowId): ArrowRole       // 'I' | 'O' | 'C' | 'M' | 'X' | 'T' — первая буква id
+isActivityId(s: string): boolean     // строгий predicate: канонический формат (lowercase suffix)
+isContextId(s: string): s is 'A-0'   // единственное значение контекстного id
+isFileId(s: string): boolean         // ActivityId ∪ ContextId
+```
+
+Гарантии: pure functions, без I/O, без side effects. Семантика — `spec/01-dsl.md` раздел «Идентификаторы». Эти helpers стабильны и являются частью semver-контракта.
 
 ## Behaviors
 

@@ -17,7 +17,7 @@ UX-связка DSL ↔ ASCII построена на нативном text edit
 - [`spec/01-dsl.md`](spec/01-dsl.md) — синтаксис и семантика `.idef0` файлов, идентификаторы (префикс роли заглавный, суффикс `[1-9a-z]+`), границы деклараций.
 - [`spec/02-formatting.md`](spec/02-formatting.md) — каноническое форматирование, режимы 1/2/3 + sub-mode Б, прилипание комментариев.
 - [`spec/03-layout.md`](spec/03-layout.md) — структура `src/idef0/`, маркер проекта `A0.*.idef0`, имена проектов в стиле Java-package notation.
-- [`spec/04-validator.md`](spec/04-validator.md) — правила валидатора: реализованы 4, 7–18 (rule 8 двухгрейдный: case violation → warning, structural violation → error). Правила 1–3 (ICOM-согласованность) и 5–6 (туннели) — `[TODO]`.
+- [`spec/04-validator.md`](spec/04-validator.md) — правила валидатора: реализованы 4, 7–18, 19 (description-identity), 20 (tunnel-in-boundary), 21 (plug labels при join), 22 (X↔O nomenclature). Rule 8 двухгрейдный — case violation → warning, structural violation → error. Rule 4 работает в inherit-ID модели (per-ID exact match всех форм boundary). Правила 1–3 (ICOM-согласованность) и 5–6 (туннели — usage/exclusivity) — `[TODO]`.
 - [`spec/05-classical-gaps.md`](spec/05-classical-gaps.md) — фичи классической IDEF0, осознанно пропущенные.
 - [`spec/PRODUCT.md`](spec/PRODUCT.md) — продуктовая обвязка: что считаем продуктом, что — инструментальной обвязкой.
 - [`spec/SDD_CONVENTIONS.md`](spec/SDD_CONVENTIONS.md) — конвенции Spec-Driven Development.

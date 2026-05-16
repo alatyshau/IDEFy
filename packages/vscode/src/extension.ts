@@ -8,7 +8,6 @@
 //   - Custom editor for `.idef0.ascii`.
 //   - Sidecar lifecycle watcher (also invalidates the validation cache on
 //     external `.idef0` changes).
-//   - One-shot `.gitignore` patcher.
 //
 // Everything that touches the filesystem goes through the adapter — the
 // invariant from COMPONENT.md §Invariants.
@@ -23,7 +22,6 @@ import {
     ASCII_VIEWER_VIEW_TYPE,
 } from "./sidecar/custom-editor.js";
 import { registerSidecarLifecycle } from "./sidecar/lifecycle-watcher.js";
-import { ensureGitignoreCoverage } from "./gitignore-activation.js";
 import {
     IdefArrowSemanticTokensProvider,
     semanticTokensLegend,
@@ -70,10 +68,6 @@ export function activate(context: vscode.ExtensionContext): void {
         context.subscriptions.push(d);
     }
 
-    void ensureGitignoreCoverage(fs, output).catch((err) => {
-        output.appendLine(`Gitignore patcher failed: ${formatError(err)}`);
-    });
-
     // Run an initial context-key reset so menus/keybindings start from a clean
     // state until the first validation pass completes.
     void pipeline.resetContextKeysForEditor(vscode.window.activeTextEditor);
@@ -114,9 +108,4 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export function deactivate(): void {
     // No-op: VS Code disposes registered subscriptions automatically.
-}
-
-function formatError(err: unknown): string {
-    if (err instanceof Error) return `${err.name}: ${err.message}`;
-    return String(err);
 }

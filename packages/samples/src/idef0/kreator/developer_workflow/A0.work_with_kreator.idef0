@@ -6,11 +6,11 @@ activity A0 "Работа с Креатором в контексте Разра
     I2 "start <named process>"
     I3 "stop <identified process>"
     I4 "act <identified process, input name, input value>"
+    C1 "PSL"
     O1 "show named process project"
     O2 "show identified process"
     O3 "show stopped process"
     O4 "show acted process' output"
-    C1 "PSL"
 
     A1 "Проектирование САПР" : I1,        C1 -> X11[O1], X12 "named process project"
     A2 "Запуск САПР"         : I2, I[X12]    -> X21[O2], X22 "identified process"

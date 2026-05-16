@@ -1,0 +1,10 @@
+# Plug labels at join — per spec/04-validator.md rule 21. Two plugs feed the
+# same O1 socket; each must have a unique label.
+
+activity A0 "Mixer" {
+    I1 "raw stream"
+    O1 "combined output"
+
+    A1 "Decode A"    : I1 -> X11[O1] "audio"
+    A2 "Decode B"    : I1 -> X21[O1] "video"
+}

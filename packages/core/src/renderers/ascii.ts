@@ -51,7 +51,20 @@ function renderActivityPlaceholder(ast: ActivityAST): string {
     const children = new Set<string>();
 
     for (const b of ast.boundary) {
-        addArrow(b.id, { I, O, C, M, X, T });
+        switch (b.kind) {
+            case "flat":
+                addArrow(b.id, { I, O, C, M, X, T });
+                break;
+            case "sibling-x-consumed":
+                X.add(b.sourceId);
+                break;
+            case "parent-x-out":
+                X.add(b.sourceId);
+                break;
+            case "tunnel":
+                T.add(b.id);
+                break;
+        }
     }
     for (const block of ast.blocks) {
         children.add(block.id);
@@ -66,6 +79,7 @@ function renderActivityPlaceholder(ast: ActivityAST): string {
             X.add(p.id);
             if (p.kind === "boundary-out") O.add(p.mappedTo);
             else if (p.kind === "tunnel-out") T.add(p.mappedTo);
+            else if (p.kind === "parent-x-mapped") X.add(p.mappedTo);
         }
     }
 

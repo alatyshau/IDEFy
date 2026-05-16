@@ -1,4 +1,4 @@
-activity A1 "Child" {
+activity A1 "child" {
     I1 "in"
     O1 "out"
 }

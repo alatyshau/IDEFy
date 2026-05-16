@@ -13,6 +13,21 @@ import {
     isOrphan,
     listProjectFiles,
 } from "../src/index.js";
+import type { NestedProjectMarker } from "../src/index.js";
+
+// REGRESSION: NestedProjectMarker must be re-exported from the loader root
+// alongside the other public types. Without this, downstream consumers
+// (`@idefy/vscode`) have to deep-import via `./types.js`, breaking the
+// stated public contract.
+function _assertNestedProjectMarkerType(): void {
+    const m: NestedProjectMarker = {
+        outerProjectRoot: "/x",
+        innerProjectRoot: "/x/y",
+        innerMarkerPath: "/x/y/A0.idef0",
+    };
+    void m;
+}
+void _assertNestedProjectMarkerType;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = path.join(__dirname, "fixtures");

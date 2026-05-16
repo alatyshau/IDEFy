@@ -20,6 +20,7 @@ import * as vscode from "vscode";
 import type { FsAdapter } from "@idefy/loader";
 import { buildAsciiViewerHtml, generateNonce } from "./webview-html.js";
 import { computeAsciiTokens } from "./ascii-tokens.js";
+import { validateAndDecodePng } from "./png-validate.js";
 import { uriToPath, writeBinaryToWorkspace } from "../fs/adapter.js";
 
 export const ASCII_VIEWER_VIEW_TYPE = "idefy.asciiViewer";
@@ -200,11 +201,21 @@ export class AsciiViewerProvider
         }
 
         if (msg.kind === "copy-png-fallback") {
-            const bytes = decodeBase64(msg.payload.base64);
-            if (bytes.byteLength > MAX_PNG_BYTES) {
-                await vscode.window.showWarningMessage(
-                    "IDEFy: PNG too large to save.",
+            // Validate-then-decode: payload is workspace/attacker-controlled.
+            // See sidecar/png-validate.ts for the rules.
+            const validated = validateAndDecodePng(
+                msg.payload.base64,
+                MAX_PNG_BYTES,
+            );
+            if (!validated.ok) {
+                this.output.appendLine(
+                    `copy-png-fallback rejected: ${validated.reason}`,
                 );
+                const userMsg =
+                    validated.reason === "not-png"
+                        ? "IDEFy: refused to save — payload is not a PNG."
+                        : "IDEFy: PNG too large to save.";
+                await vscode.window.showWarningMessage(userMsg);
                 return;
             }
             const defaultName = posixBasename(document.uri.path).replace(
@@ -217,7 +228,7 @@ export class AsciiViewerProvider
                 filters: { "PNG image": ["png"] },
             });
             if (target === undefined) return;
-            await writeBinaryToWorkspace(target, bytes);
+            await writeBinaryToWorkspace(target, validated.bytes);
             await vscode.window.setStatusBarMessage(
                 `IDEFy: saved ${posixBasename(target.path)}`,
                 3000,
@@ -235,10 +246,6 @@ export class AsciiViewerProvider
             return { ok: false, message };
         }
     }
-}
-
-function decodeBase64(b64: string): Uint8Array {
-    return Buffer.from(b64, "base64");
 }
 
 function posixBasename(p: string): string {

@@ -10,8 +10,10 @@
 //   - Activity family (red): `activity`/`context` keywords, A-IDs, `{` `}`,
 //     `:`, `->`. A-IDs additionally bold.
 //   - Arrow roles: I→blue, O→green, C→yellow, M→purple, X→gray, T→orange.
-//     Outer letter + `[` `]` of a bracket form inherit the outer role colour
-//     and are bold. Inner ID inside `[...]` gets its own role colour and italic.
+//     All arrow ID literals are bold by default; only the inner ID inside
+//     `[...]` is italic instead (it gets its own role colour from the inner
+//     letter). Outer letter + `[` `]` of a bracket form inherit the outer
+//     role colour and stay bold like any other arrow ID.
 //   - Strings and `#` comments → muted, so user content recedes vs the DSL.
 //   - `,` → muted (`descriptionForeground`), keeps lists readable but quiet.
 
@@ -87,8 +89,8 @@ export class IdefyDecorator implements vscode.Disposable {
             const range = rangeOf(editor.document, hit.offset, hit.length);
             const arrowBucket = buckets.arrow[hit.role];
             if (arrowBucket !== undefined) arrowBucket.push(range);
-            if (hit.position === "outer") buckets.bold.push(range);
-            else if (hit.position === "inner") buckets.italic.push(range);
+            if (hit.position === "inner") buckets.italic.push(range);
+            else buckets.bold.push(range);
         }
         for (const hit of scanActivityIds(text)) {
             const range = rangeOf(editor.document, hit.offset, hit.length);

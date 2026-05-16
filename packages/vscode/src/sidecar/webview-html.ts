@@ -330,11 +330,18 @@ function jsonForInlineScript(value: string): string {
     return JSON.stringify(value).replace(/<\//g, "<\\/");
 }
 
+// CSP nonces must come from a cryptographically strong RNG — `Math.random()`
+// is predictable and unsafe for security tokens. We use `node:crypto`'s
+// `randomBytes` (available in the extension-host Node runtime) and emit a
+// base64url-encoded token. 24 bytes → 32 base64url chars (no padding).
 export function generateNonce(): string {
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    let out = "";
-    for (let i = 0; i < 32; i++) {
-        out += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return out;
+    // `require` keeps this module browser-importable for the static
+    // webview-html unit tests; the extension host always has `node:crypto`.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { randomBytes } = require("node:crypto") as typeof import("node:crypto");
+    return randomBytes(24)
+        .toString("base64")
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
 }

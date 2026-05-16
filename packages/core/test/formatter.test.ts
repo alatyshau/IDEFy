@@ -18,6 +18,8 @@ const SCENARIOS = [
     "boundary_sort",
     "escape_roundtrip",
     "coffee_idempotent",
+    "plug_labels",
+    "trailer_dropped",
 ] as const;
 
 describe.each(SCENARIOS)("formatter fixture: %s", (scenario) => {

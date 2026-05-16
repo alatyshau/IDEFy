@@ -3,8 +3,6 @@
 
 activity A0 "Recruiting" {
     I1 "vacancy"
-    O1 "hire"
-    O2 "reject"
     C1 "policy"
     C2 "hiring bar"
     C3 "rules"
@@ -13,6 +11,10 @@ activity A0 "Recruiting" {
     M2 "interviewer"
     M3 "coordinator"
     M4 "HR-partner"
+    O1 "hire"
+    O2 "reject"
+    T1 "culture"
+    T2 "market"
 
     A1 "Search"       : I1,     C2, C3, C[T2], M1, M3 -> X11 "candidates"
     A2 "Interview"    : I[X11], C3,            M2, M4 -> X21 "scores"

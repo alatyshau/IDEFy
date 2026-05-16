@@ -2,13 +2,15 @@ import type {
     ActivityAST,
     ActivityId,
     ActivityNode,
+    BoundaryArrow,
     Diagnostic,
     IdefProject,
     NestedProjectMarker,
+    ProducedArrowRef,
     ProjectFile,
     SourceRange,
+    StringLiteral,
 } from "../types.js";
-import { computeProjectName } from "../assembler/assemble.js";
 import {
     isActivityId,
     isValidArrowId,
@@ -22,9 +24,6 @@ const ZERO_RANGE: SourceRange = {
     end: { line: 1, column: 1 },
 };
 
-const VALID_PROJECT_NAME_RE =
-    /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*$/;
-
 export function validate(project: IdefProject): Diagnostic[] {
     const diags: Diagnostic[] = [];
 
@@ -33,6 +32,10 @@ export function validate(project: IdefProject): Diagnostic[] {
     diags.push(...checkDuplicateIds(project));
     diags.push(...checkInterfaceConsistency(project));
     diags.push(...checkSectionOrder(project));
+    diags.push(...checkDescriptionIdentity(project));
+    diags.push(...checkTunnelInBoundary(project));
+    diags.push(...checkPlugLabels(project));
+    diags.push(...checkXONomenclature(project));
 
     return diags;
 }
@@ -135,8 +138,17 @@ function checkProjectStructure(project: IdefProject): Diagnostic[] {
 
     // Rule 13: Project path components must be valid Java-style identifiers.
     // Rule 14: At least one folder deep under scan root.
-    const recomputed = computeProjectName(project.scanRoot, project.projectRoot);
-    if (recomputed === "") {
+    //
+    // Важно: проверяем RAW сегменты (то, что между `/` в path), а не имя
+    // проекта после collapse-в-Java-нотацию через `.`. Иначе папка с
+    // точкой в имени (`as.is`) после collapse расщепляется regex'ом на
+    // два «валидных» сегмента и пропускается. Точка в имени папки на
+    // пути до projectRoot — это error rule 13.
+    const rawSegments = rawProjectSegments(project.scanRoot, project.projectRoot);
+    if (rawSegments === null) {
+        // projectRoot не лежит под scanRoot — этот случай уже покрывается
+        // другими правилами; пропускаем без diagnostic, чтобы не дублировать.
+    } else if (rawSegments.length === 0) {
         diags.push({
             severity: "error",
             source: "validator",
@@ -146,19 +158,43 @@ function checkProjectStructure(project: IdefProject): Diagnostic[] {
             message:
                 "Project must be at least one folder deep under the scan root (A0.*.idef0 directly in src/idef0/ is not allowed)",
         });
-    } else if (!VALID_PROJECT_NAME_RE.test(recomputed)) {
-        diags.push({
-            severity: "error",
-            source: "validator",
-            ruleId: "validator.rule-13",
-            range: ZERO_RANGE,
-            file: project.projectRoot,
-            message: `Invalid project path: components must match [a-z][a-z0-9_]* (got project name '${recomputed}')`,
-        });
+    } else {
+        const invalid = rawSegments.find(
+            (s) => !VALID_PROJECT_SEGMENT_RE.test(s),
+        );
+        if (invalid !== undefined) {
+            diags.push({
+                severity: "error",
+                source: "validator",
+                ruleId: "validator.rule-13",
+                range: ZERO_RANGE,
+                file: project.projectRoot,
+                message: `Invalid project path: folder segment '${invalid}' must match [a-z][a-z0-9_]* (no dots, dashes, or uppercase)`,
+            });
+        }
     }
 
     return diags;
 }
+
+// Returns the list of folder segments between scanRoot and projectRoot,
+// **before** collapsing them to Java-package notation. Empty list = projectRoot
+// equals scanRoot. `null` = projectRoot doesn't lie inside scanRoot.
+function rawProjectSegments(
+    scanRoot: string,
+    projectRoot: string,
+): readonly string[] | null {
+    const root = scanRoot.replace(/\\/g, "/").replace(/\/+$/, "");
+    const proj = projectRoot.replace(/\\/g, "/").replace(/\/+$/, "");
+    if (proj === root) return [];
+    if (!proj.startsWith(root + "/")) return null;
+    return proj
+        .substring(root.length + 1)
+        .split("/")
+        .filter((s) => s.length > 0);
+}
+
+const VALID_PROJECT_SEGMENT_RE = /^[a-z][a-z0-9_]*$/;
 
 // ─── Rules 7, 8, 10, 17 ──────────────────────────────────────────────────────
 
@@ -298,7 +334,37 @@ function checkInterfaceConsistency(project: IdefProject): Diagnostic[] {
     return diags;
 }
 
-type ICOM = "I" | "O" | "C" | "M";
+// Boundary "slot" — a normalized representation of one boundary entry used
+// for rule-4 set comparison. Two entries are equal iff their slot strings match.
+// Examples: "flat:I:I1", "sx:C:X22", "px:X11", "tun:T1".
+function boundarySlot(a: BoundaryArrow): string {
+    switch (a.kind) {
+        case "flat":
+            return `flat:${a.role}:${a.id}`;
+        case "sibling-x-consumed":
+            return `sx:${a.role}:${a.sourceId}`;
+        case "parent-x-out":
+            return `px:${a.sourceId}`;
+        case "tunnel":
+            return `tun:${a.id}`;
+    }
+}
+
+function boundarySlotDisplay(slot: string): string {
+    const [kind, ...rest] = slot.split(":");
+    switch (kind) {
+        case "flat":
+            return rest[1] ?? "";
+        case "sx":
+            return `${rest[0]}[${rest[1]}]`;
+        case "px":
+            return `O[${rest[0]}]`;
+        case "tun":
+            return rest[0] ?? "";
+        default:
+            return slot;
+    }
+}
 
 function compareInterfaces(
     childAst: ActivityAST,
@@ -306,90 +372,84 @@ function compareInterfaces(
 ): Diagnostic[] {
     const diags: Diagnostic[] = [];
     if (!node.blockInParent) return diags;
-    const childByRole: Record<ICOM, Set<string>> = {
-        I: new Set(),
-        O: new Set(),
-        C: new Set(),
-        M: new Set(),
-    };
-    for (const arr of childAst.boundary) {
-        const r = arr.id.charAt(0);
-        if (r === "I" || r === "O" || r === "C" || r === "M") {
-            childByRole[r].add(arr.id);
-        }
-    }
-    const parentExpected: Record<ICOM, Set<string>> = {
-        I: new Set(),
-        O: new Set(),
-        C: new Set(),
-        M: new Set(),
-    };
+
+    // Compute expected boundary slots from parent's block declaration. The
+    // rule: child boundary = parent's consumed ∪ parent's produced (modulo
+    // tunnels, which follow rule 20 separately).
+    const expected = new Set<string>();
     for (const c of node.blockInParent.consumed) {
         if (c.kind === "parent") {
-            const r = c.role;
-            if (r === "I" || r === "C" || r === "M") {
-                parentExpected[r].add(c.id);
+            // I1/C1/M1 → flat boundary entry
+            if (c.role === "I" || c.role === "C" || c.role === "M") {
+                expected.add(`flat:${c.role}:${c.id}`);
+            }
+        } else {
+            // sibling: I[X22]/C[T1] etc. The role is the outer letter; the
+            // inner is X-* (sibling-X) or T-* (tunnel). Sibling-X → bracket
+            // boundary form. Tunnel → flat T boundary entry (per rule 20).
+            const innerRole = c.sourceId.charAt(0);
+            if (innerRole === "T") {
+                expected.add(`tun:${c.sourceId}`);
+            } else {
+                // assume X (or any other → still bracket form)
+                expected.add(`sx:${c.role}:${c.sourceId}`);
             }
         }
     }
     for (const p of node.blockInParent.produced) {
-        if (p.kind === "boundary-out") {
-            parentExpected.O.add(p.mappedTo);
-        }
-    }
-    for (const role of ["I", "O", "C", "M"] as const) {
-        const expected = parentExpected[role];
-        const actual = childByRole[role];
-        for (const id of expected) {
-            if (!actual.has(id)) {
-                diags.push({
-                    severity: "error",
-                    source: "validator",
-                    ruleId: "validator.rule-4",
-                    range: childAst.location.range,
-                    file: node.file.path,
-                    message: `Activity '${node.id}': boundary is missing ${role}-arrow '${id}' (used by parent '${node.parent?.id ?? "?"}' in functional block declaration)`,
-                });
-            }
-        }
-        for (const id of actual) {
-            if (!expected.has(id)) {
-                diags.push({
-                    severity: "error",
-                    source: "validator",
-                    ruleId: "validator.rule-4",
-                    range: childAst.location.range,
-                    file: node.file.path,
-                    message: `Activity '${node.id}': boundary declares ${role}-arrow '${id}' but parent '${node.parent?.id ?? "?"}' does not reference it in its functional block`,
-                });
-            }
+        switch (p.kind) {
+            case "new":
+                // X11 "..." at parent → O[X11] at child boundary
+                expected.add(`px:${p.id}`);
+                break;
+            case "boundary-out":
+                // X11[O1] → flat O1 at child boundary
+                expected.add(`flat:O:${p.mappedTo}`);
+                break;
+            case "tunnel-out":
+                // X11[T1] → flat T1 at child boundary
+                expected.add(`tun:${p.mappedTo}`);
+                break;
+            case "parent-x-mapped":
+                // X11[X22] → O[X22] at child boundary
+                expected.add(`px:${p.mappedTo}`);
+                break;
         }
     }
 
-    // Cardinality check (per spec/04-validator.md rule 4): each own-described
-    // produced arrow at the parent (`X "..."`) must correspond to an output at
-    // the child boundary. We can't match individual ids (parent X-ids live in
-    // parent's namespace, not child's), but we can ensure cardinalities are
-    // compatible — the child must have AT LEAST as many O-arrows as the parent
-    // has own-described X outputs + boundary-out X[O] mappings. The boundary-out
-    // mappings were already accounted for; remaining O slack must absorb the
-    // own-described X count. Description match is `[TODO]` for post-MVP.
-    const ownDescribedCount = node.blockInParent.produced.filter(
-        (p) => p.kind === "new"
-    ).length;
-    const childOCount = childByRole.O.size;
-    const parentBoundaryOutCount = parentExpected.O.size;
-    if (childOCount < parentBoundaryOutCount + ownDescribedCount) {
-        diags.push({
-            severity: "error",
-            source: "validator",
-            ruleId: "validator.rule-4",
-            range: childAst.location.range,
-            file: node.file.path,
-            message: `Activity '${node.id}': parent '${node.parent?.id ?? "?"}' produces ${
-                parentBoundaryOutCount + ownDescribedCount
-            } output arrow(s) (${parentBoundaryOutCount} bound to parent O + ${ownDescribedCount} new X "..."), but child boundary declares only ${childOCount} O-arrow(s)`,
-        });
+    const actual = new Set<string>();
+    for (const a of childAst.boundary) {
+        actual.add(boundarySlot(a));
+    }
+
+    for (const slot of expected) {
+        if (!actual.has(slot)) {
+            diags.push({
+                severity: "error",
+                source: "validator",
+                ruleId: "validator.rule-4",
+                range: childAst.location.range,
+                file: node.file.path,
+                message: `Activity '${node.id}': boundary is missing entry '${boundarySlotDisplay(slot)}' (declared by parent '${node.parent?.id ?? "?"}' in functional block declaration)`,
+            });
+        }
+    }
+    for (const slot of actual) {
+        // Tunnels in the actual set that are NOT in expected may still be
+        // legitimate per rule 20 (tunnel used inside this activity's own
+        // decomposition). Rule 20 checks those separately. Skip tunnel
+        // entries here to avoid false positives.
+        if (slot.startsWith("tun:")) continue;
+        if (!expected.has(slot)) {
+            diags.push({
+                severity: "error",
+                source: "validator",
+                ruleId: "validator.rule-4",
+                range: childAst.location.range,
+                file: node.file.path,
+                message: `Activity '${node.id}': boundary declares entry '${boundarySlotDisplay(slot)}' but parent '${node.parent?.id ?? "?"}' does not reference it in its functional block`,
+            });
+        }
     }
     return diags;
 }
@@ -418,7 +478,7 @@ function checkSectionOrder(project: IdefProject): Diagnostic[] {
                     ruleId: "validator.rule-18",
                     range: arr.location.range,
                     file: file.path,
-                    message: `Section order violation: boundary arrow '${arr.id}' appears after a functional block — boundary section must precede decomposition section`,
+                    message: `Section order violation: boundary arrow '${boundaryDisplayForDiag(arr)}' appears after a functional block — boundary section must precede decomposition section`,
                 });
             }
         }
@@ -468,13 +528,41 @@ function activityIdDiagnostics(
     return [];
 }
 
+function boundaryDisplayForDiag(a: BoundaryArrow): string {
+    switch (a.kind) {
+        case "flat":
+            return a.id;
+        case "sibling-x-consumed":
+            return `${a.role}[${a.sourceId}]`;
+        case "parent-x-out":
+            return `O[${a.sourceId}]`;
+        case "tunnel":
+            return a.id;
+    }
+}
+
 function arrowIdDiagnosticsForActivity(
     ast: ActivityAST,
     file: string,
 ): Diagnostic[] {
     const diags: Diagnostic[] = [];
     for (const b of ast.boundary) {
-        diags.push(...arrowIdDiagnostics(b.id, b.location.range, file, "boundary arrow"));
+        const ids: string[] = [];
+        switch (b.kind) {
+            case "flat":
+                ids.push(b.id);
+                break;
+            case "sibling-x-consumed":
+            case "parent-x-out":
+                ids.push(b.sourceId);
+                break;
+            case "tunnel":
+                ids.push(b.id);
+                break;
+        }
+        for (const id of ids) {
+            diags.push(...arrowIdDiagnostics(id, b.location.range, file, "boundary arrow"));
+        }
     }
     for (const block of ast.blocks) {
         for (const c of block.consumed) {
@@ -483,7 +571,11 @@ function arrowIdDiagnosticsForActivity(
         }
         for (const p of block.produced) {
             diags.push(...arrowIdDiagnostics(p.id, p.location.range, file, "produced arrow"));
-            if (p.kind === "boundary-out" || p.kind === "tunnel-out") {
+            if (
+                p.kind === "boundary-out" ||
+                p.kind === "tunnel-out" ||
+                p.kind === "parent-x-mapped"
+            ) {
                 diags.push(...arrowIdDiagnostics(p.mappedTo, p.location.range, file, "boundary mapping"));
             }
         }
@@ -518,4 +610,364 @@ function arrowIdDiagnostics(
 
 function capitalize(s: string): string {
     return s.length === 0 ? s : s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// ─── Rule 19: description-identity ───────────────────────────────────────────
+
+function findOwnerDescription(
+    arr: BoundaryArrow,
+    node: ActivityNode,
+    project: IdefProject
+): StringLiteral | null {
+    switch (arr.kind) {
+        case "flat": {
+            // O-flat in child boundary: при join плаг этого ребёнка к O несёт
+            // label — это и есть owner. Иначе — socket description (ancestor's
+            // flat O). I/C/M — всегда socket description предка (нет plug-side).
+            if (arr.role === "O" && node.blockInParent) {
+                const plug = node.blockInParent.produced.find(
+                    (p) => p.kind === "boundary-out" && p.mappedTo === arr.id,
+                );
+                if (plug && plug.kind === "boundary-out" && plug.label) {
+                    return plug.label;
+                }
+            }
+            // Walk up parent chain; owner = ancestor with same flat boundary entry.
+            let ancestor = node.parent;
+            while (ancestor !== null) {
+                const aast = ancestor.file.ast;
+                if (aast && aast.kind === "activity") {
+                    for (const a of aast.boundary) {
+                        if (
+                            a.kind === "flat" &&
+                            a.id === arr.id &&
+                            a.role === arr.role
+                        ) {
+                            return a.description;
+                        }
+                    }
+                }
+                ancestor = ancestor.parent;
+            }
+            return null;
+        }
+        case "sibling-x-consumed":
+        case "parent-x-out": {
+            // O[X*] in child boundary: при join плаг этого ребёнка к X несёт
+            // label — это и есть owner. Иначе — own-described X у предка.
+            if (arr.kind === "parent-x-out" && node.blockInParent) {
+                const plug = node.blockInParent.produced.find(
+                    (p) =>
+                        p.kind === "parent-x-mapped" &&
+                        p.mappedTo === arr.sourceId,
+                );
+                if (plug && plug.kind === "parent-x-mapped" && plug.label) {
+                    return plug.label;
+                }
+            }
+            // Owner: ancestor's block where `<sourceId> "..."` is own-described.
+            let ancestor = node.parent;
+            while (ancestor !== null) {
+                const aast = ancestor.file.ast;
+                if (aast && aast.kind === "activity") {
+                    for (const block of aast.blocks) {
+                        for (const p of block.produced) {
+                            if (p.kind === "new" && p.id === arr.sourceId) {
+                                return p.description;
+                            }
+                        }
+                    }
+                }
+                ancestor = ancestor.parent;
+            }
+            return null;
+        }
+        case "tunnel": {
+            // T in child boundary: при join плаг этого ребёнка к T несёт label
+            // — это и есть owner. Иначе — declaration в A-0.
+            if (node.blockInParent) {
+                const plug = node.blockInParent.produced.find(
+                    (p) => p.kind === "tunnel-out" && p.mappedTo === arr.id,
+                );
+                if (plug && plug.kind === "tunnel-out" && plug.label) {
+                    return plug.label;
+                }
+            }
+            if (project.context) {
+                const decl = project.context.tunnels.get(arr.id);
+                if (decl) return decl.description;
+            }
+            return null;
+        }
+    }
+}
+
+function checkDescriptionIdentity(project: IdefProject): Diagnostic[] {
+    const diags: Diagnostic[] = [];
+    for (const node of project.activities.values()) {
+        const ast = node.file.ast;
+        if (!ast || ast.kind !== "activity") continue;
+
+        for (const arr of ast.boundary) {
+            // A0's own flat entries ARE the owner — nothing to verify against.
+            if (node.id === "A0" && arr.kind === "flat") continue;
+            const ownerDesc = findOwnerDescription(arr, node, project);
+            if (ownerDesc === null) continue; // no owner found — other rules handle structural fault
+            if (arr.description.value !== ownerDesc.value) {
+                diags.push({
+                    severity: "error",
+                    source: "validator",
+                    ruleId: "validator.rule-19",
+                    range: arr.description.location.range,
+                    file: node.file.path,
+                    message: `Description '${arr.description.value}' for boundary entry '${boundaryDisplayForDiag(arr)}' does not match owner-level description '${ownerDesc.value}'`,
+                });
+            }
+        }
+
+        // Activity header name vs parent block declaration name.
+        if (node.blockInParent) {
+            if (ast.name.value !== node.blockInParent.name.value) {
+                diags.push({
+                    severity: "error",
+                    source: "validator",
+                    ruleId: "validator.rule-19",
+                    range: ast.name.location.range,
+                    file: node.file.path,
+                    message: `Activity header name '${ast.name.value}' does not match parent block declaration name '${node.blockInParent.name.value}'`,
+                });
+            }
+        }
+    }
+    return diags;
+}
+
+// ─── Rule 20: tunnel-in-boundary ─────────────────────────────────────────────
+
+function collectTunnelsUsedInside(
+    node: ActivityNode,
+    recursive: boolean,
+): Set<string> {
+    const used = new Set<string>();
+    const visit = (n: ActivityNode): void => {
+        const ast = n.file.ast;
+        if (ast && ast.kind === "activity") {
+            for (const block of ast.blocks) {
+                for (const c of block.consumed) {
+                    if (c.kind === "sibling" && c.sourceId.startsWith("T")) {
+                        used.add(c.sourceId);
+                    }
+                }
+                for (const p of block.produced) {
+                    if (p.kind === "tunnel-out") used.add(p.mappedTo);
+                }
+            }
+        }
+        if (recursive) {
+            for (const child of n.children.values()) visit(child);
+        }
+    };
+    const root = node.file.ast;
+    if (root && root.kind === "activity") {
+        for (const block of root.blocks) {
+            for (const c of block.consumed) {
+                if (c.kind === "sibling" && c.sourceId.startsWith("T")) {
+                    used.add(c.sourceId);
+                }
+            }
+            for (const p of block.produced) {
+                if (p.kind === "tunnel-out") used.add(p.mappedTo);
+            }
+        }
+    }
+    if (recursive) {
+        for (const child of node.children.values()) visit(child);
+    }
+    return used;
+}
+
+function checkTunnelInBoundary(project: IdefProject): Diagnostic[] {
+    const diags: Diagnostic[] = [];
+    for (const node of project.activities.values()) {
+        const ast = node.file.ast;
+        if (!ast || ast.kind !== "activity") continue;
+
+        const usedHereOrBelow = collectTunnelsUsedInside(node, true);
+        const declared = new Set<string>();
+        for (const arr of ast.boundary) {
+            if (arr.kind === "tunnel") declared.add(arr.id);
+        }
+
+        for (const tid of usedHereOrBelow) {
+            if (!declared.has(tid)) {
+                diags.push({
+                    severity: "error",
+                    source: "validator",
+                    ruleId: "validator.rule-20",
+                    range: ast.location.range,
+                    file: node.file.path,
+                    message: `Tunnel '${tid}' is used inside activity '${node.id}' (here or deeper) but not declared in its boundary — add '${tid} "<description>"' to boundary`,
+                });
+            }
+        }
+        for (const tid of declared) {
+            if (!usedHereOrBelow.has(tid)) {
+                diags.push({
+                    severity: "warning",
+                    source: "validator",
+                    ruleId: "validator.rule-20",
+                    range: ast.location.range,
+                    file: node.file.path,
+                    message: `Tunnel '${tid}' declared in boundary of '${node.id}' but never used inside its decomposition`,
+                });
+            }
+        }
+    }
+    return diags;
+}
+
+// ─── Rule 21: plug labels at join ────────────────────────────────────────────
+
+type BracketProduced = Extract<
+    ProducedArrowRef,
+    { kind: "boundary-out" | "tunnel-out" | "parent-x-mapped" }
+>;
+
+function isBracketProduced(p: ProducedArrowRef): p is BracketProduced {
+    return (
+        p.kind === "boundary-out" ||
+        p.kind === "tunnel-out" ||
+        p.kind === "parent-x-mapped"
+    );
+}
+
+function socketKindLabel(kind: BracketProduced["kind"]): string {
+    switch (kind) {
+        case "boundary-out":
+            return "O";
+        case "tunnel-out":
+            return "T";
+        case "parent-x-mapped":
+            return "X";
+    }
+}
+
+function checkPlugLabels(project: IdefProject): Diagnostic[] {
+    const diags: Diagnostic[] = [];
+    for (const node of project.activities.values()) {
+        const ast = node.file.ast;
+        if (!ast || ast.kind !== "activity") continue;
+
+        // Group plugs in this activity's decomposition by the socket they target.
+        // Key = `${kind}:${mappedTo}` — e.g., "boundary-out:O1" or "tunnel-out:T2".
+        const groups = new Map<string, BracketProduced[]>();
+        for (const block of ast.blocks) {
+            for (const p of block.produced) {
+                if (!isBracketProduced(p)) continue;
+                const key = `${p.kind}:${p.mappedTo}`;
+                let list = groups.get(key);
+                if (!list) {
+                    list = [];
+                    groups.set(key, list);
+                }
+                list.push(p);
+            }
+        }
+
+        for (const list of groups.values()) {
+            if (list.length === 1) {
+                // Single plug — label forbidden.
+                const plug = list[0]!;
+                if (plug.label !== undefined) {
+                    const socketDisplay = `${socketKindLabel(plug.kind)}-сокет '${plug.mappedTo}'`;
+                    diags.push({
+                        severity: "error",
+                        source: "validator",
+                        ruleId: "validator.rule-21",
+                        range: plug.label.location.range,
+                        file: node.file.path,
+                        message: `Plug '${plug.id}[${plug.mappedTo}]' is the only plug at ${socketDisplay} in activity '${node.id}'; label is forbidden when there is no join (description is inherited from the socket)`,
+                    });
+                }
+                continue;
+            }
+            // Join: each plug must have a unique label.
+            const seenLabels = new Map<string, BracketProduced>();
+            for (const plug of list) {
+                if (plug.label === undefined) {
+                    const socketDisplay = `${socketKindLabel(plug.kind)}-сокет '${plug.mappedTo}'`;
+                    diags.push({
+                        severity: "error",
+                        source: "validator",
+                        ruleId: "validator.rule-21",
+                        range: plug.location.range,
+                        file: node.file.path,
+                        message: `Plug '${plug.id}[${plug.mappedTo}]' must have a label — there are ${list.length} plugs at ${socketDisplay} in activity '${node.id}' (join)`,
+                    });
+                    continue;
+                }
+                const lbl = plug.label.value;
+                const prev = seenLabels.get(lbl);
+                if (prev) {
+                    diags.push({
+                        severity: "error",
+                        source: "validator",
+                        ruleId: "validator.rule-21",
+                        range: plug.label.location.range,
+                        file: node.file.path,
+                        message: `Plug label '${lbl}' is duplicated at ${socketKindLabel(plug.kind)}-сокет '${plug.mappedTo}' (also used by plug '${prev.id}[${prev.mappedTo}]'); labels at a join must be unique`,
+                    });
+                } else {
+                    seenLabels.set(lbl, plug);
+                }
+            }
+        }
+    }
+    return diags;
+}
+
+// ─── Rule 22: X↔O nomenclature ───────────────────────────────────────────────
+
+function indexToSuffixChar(idx: number): string | null {
+    // 1..9 → "1".."9"; 10..35 → "a".."z"
+    if (idx >= 1 && idx <= 9) return String(idx);
+    if (idx >= 10 && idx <= 35) {
+        return String.fromCharCode("a".charCodeAt(0) + (idx - 10));
+    }
+    return null;
+}
+
+function expectedPlugId(blockId: string, outputIdx: number): string | null {
+    if (!blockId.startsWith("A") || blockId.length < 2) return null;
+    const idSuffix = blockId.slice(1);
+    const idxChar = indexToSuffixChar(outputIdx);
+    if (idxChar === null) return null;
+    return `X${idSuffix}${idxChar}`;
+}
+
+function checkXONomenclature(project: IdefProject): Diagnostic[] {
+    const diags: Diagnostic[] = [];
+    for (const node of project.activities.values()) {
+        const ast = node.file.ast;
+        if (!ast || ast.kind !== "activity") continue;
+        for (const block of ast.blocks) {
+            if (!isWellFormedActivityId(block.id) || block.id === "A0") continue;
+            for (let i = 0; i < block.produced.length; i += 1) {
+                const p = block.produced[i]!;
+                const expected = expectedPlugId(block.id, i + 1);
+                if (expected === null) continue;
+                if (p.id !== expected) {
+                    diags.push({
+                        severity: "error",
+                        source: "validator",
+                        ruleId: "validator.rule-22",
+                        range: p.location.range,
+                        file: node.file.path,
+                        message: `Plug id '${p.id}' does not follow X↔O nomenclature for block '${block.id}' produced[${i + 1}] — expected '${expected}'`,
+                    });
+                }
+            }
+        }
+    }
+    return diags;
 }

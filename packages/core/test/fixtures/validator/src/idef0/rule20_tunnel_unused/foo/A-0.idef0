@@ -1,0 +1,6 @@
+context A-0 "ctx" {
+    T1 "useful tunnel"
+    T2 "redundant tunnel"
+
+    ...A0
+}

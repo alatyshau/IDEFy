@@ -1,0 +1,6 @@
+activity A0 "root" {
+    I1 "input"
+    O1 "output"
+
+    A1 "first" : I1 -> X22 "wrong-id"
+}
