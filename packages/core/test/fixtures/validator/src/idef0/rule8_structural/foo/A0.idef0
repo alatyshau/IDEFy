@@ -1,0 +1,10 @@
+# Structural-violation fixture per spec/04-validator.md §rule 8.
+# Block id `A10` has `0` inside the suffix — reserved for the root `A0`.
+# Expected: rule-8 ERROR (structural violation), not a warning.
+activity A0 "structural test" {
+    I1 "in"
+    O1 "out"
+
+    A1 "ok" : I1 -> X11[O1]
+    A10 "bad: 0 in suffix" : I1 -> X21[O1]
+}

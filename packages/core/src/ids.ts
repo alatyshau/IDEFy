@@ -12,17 +12,31 @@ export function roleOf(id: ArrowId): ArrowRole {
     return head as ArrowRole;
 }
 
-// Активность: 'A0' (корень) или 'A' + суффикс из [1-9A-Z]+.
-// Цифра 0 в суффиксе запрещена per spec/01-dsl.md (алфавит суффиксов 1..9, A..Z;
-// «0» зарезервирован за корнем). Так что A10, A20, A1Z0 — НЕ валидные id.
-const ACTIVITY_ID_RE = /^A(?:0|[1-9A-Z]+)$/;
+// Активность: каноничная форма 'A0' (корень) или 'A' + суффикс [1-9a-z]+.
+// Цифра 0 в суффиксе запрещена per spec/01-dsl.md («0» зарезервирован за
+// корнем), заглавные буквы в суффиксе тоже запрещены — этот контраст
+// префикс/суффикс визуально разделяет роль и путь декомпозиции. Невалидно:
+// A0 в качестве дочернего, A10, A1z0.
+const ACTIVITY_ID_RE = /^A(?:0|[1-9a-z]+)$/;
 
-// Arrow id: <role-letter><uppercase + digit suffix>. spec/01-dsl.md явно требует
-// «алфавитно-цифровая комбинация» — в нашем DSL это uppercase + digits, в соответствии
-// со всеми примерами спеки (см. spec/01-dsl.md, раздел «Стрелки»).
-const ARROW_ID_RE = /^[IOCMXT][A-Z0-9]+$/;
+// Arrow id (каноничная форма): <role-letter><суффикс [1-9a-z]+>. Префикс —
+// заглавный (I/O/C/M/X/T), суффикс — строчные буквы + цифры 1..9. Тот же
+// запрет «0 в суффиксе», что и для активити.
+const ARROW_ID_RE = /^[IOCMXT][1-9a-z]+$/;
 
-export function isActivityId(s: string): s is ActivityId {
+// «Well-formed» формы — структурно валидны (корень `A0`, префикс заглавный,
+// `0` в суффиксе запрещён), но допускают заглавные буквы в суффиксе. Спека
+// `04-validator.md §rule 8` различает structural violation (error) и case
+// violation (warning); парсер и валидатор используют lenient regex'ы как
+// «well-formed» порог, а strict regex выше — как «canonical».
+const ACTIVITY_ID_LENIENT_RE = /^A(?:0|[1-9A-Za-z]+)$/;
+const ARROW_ID_LENIENT_RE = /^[IOCMXT][1-9A-Za-z]+$/;
+
+// `ActivityId` / `FileId` are type aliases for `string`, so an `s is …`
+// guard narrows the negative branch to `never` and breaks callers that try to
+// touch the rejected value (.charAt, etc.). The annotation provides no real
+// info either way — return `boolean`.
+export function isActivityId(s: string): boolean {
     return ACTIVITY_ID_RE.test(s);
 }
 
@@ -30,7 +44,7 @@ export function isContextId(s: string): s is "A-0" {
     return s === "A-0";
 }
 
-export function isFileId(s: string): s is FileId {
+export function isFileId(s: string): boolean {
     return isContextId(s) || isActivityId(s);
 }
 
@@ -44,6 +58,26 @@ export function isValidArrowIdInRoles(
     allowedRoles: ReadonlySet<ArrowRole>
 ): boolean {
     if (!ARROW_ID_RE.test(s)) return false;
+    return allowedRoles.has(s.charAt(0) as ArrowRole);
+}
+
+// «Well-formed» predicate — true iff id is structurally valid (parser-level),
+// even if it violates the canonical lowercase-suffix convention. Validator
+// uses this to distinguish error-grade structural violations from warning-grade
+// case violations (see spec/04-validator.md §rule 8).
+export function isWellFormedActivityId(s: string): boolean {
+    return ACTIVITY_ID_LENIENT_RE.test(s);
+}
+
+export function isWellFormedArrowId(s: string): boolean {
+    return ARROW_ID_LENIENT_RE.test(s);
+}
+
+export function isWellFormedArrowIdInRoles(
+    s: string,
+    allowedRoles: ReadonlySet<ArrowRole>
+): boolean {
+    if (!ARROW_ID_LENIENT_RE.test(s)) return false;
     return allowedRoles.has(s.charAt(0) as ArrowRole);
 }
 
@@ -74,18 +108,27 @@ export function compareActivityIds(a: ActivityId, b: ActivityId): number {
     return a < b ? -1 : 1;
 }
 
-// Сортировка стрелок внутри роли: цифры/буквы идут до '[' (то есть голые I1 до I[X11]).
-// Сравнение посимвольно с учётом, что '[' имеет специальный «больший» вес.
+// Сортировка стрелок внутри роли: суффиксы (цифры 1..9, строчные a..z) идут
+// до '[' (то есть голые I1, Ia — до bracket-форм I[X11]). По ASCII '[' (91) и
+// ']' (93) сидят между заглавными и строчными буквами, поэтому без явной
+// перенумерации lowercase ('a'=97..) попали бы ПОСЛЕ '['. Возвращаем bracket
+// chars в «больший» хвост через rank().
 export function compareArrowKeys(a: string, b: string): number {
     if (a === b) return 0;
     const minLen = Math.min(a.length, b.length);
     for (let i = 0; i < minLen; i += 1) {
-        const ca = a.charCodeAt(i);
-        const cb = b.charCodeAt(i);
-        if (ca === cb) continue;
-        // '[' (0x5B) уже больше всех заглавных букв и цифр в ASCII,
-        // так что обычное сравнение даёт правильный порядок.
-        return ca - cb;
+        const ra = rank(a.charCodeAt(i));
+        const rb = rank(b.charCodeAt(i));
+        if (ra === rb) continue;
+        return ra - rb;
     }
     return a.length - b.length;
+}
+
+function rank(c: number): number {
+    // '[' (0x5B) → 200; ']' (0x5D) → 201. Любые suffix-символы (1..9, a..z)
+    // оставляем как есть — их ASCII-коды (49..57, 97..122) меньше 200.
+    if (c === 0x5b) return 200;
+    if (c === 0x5d) return 201;
+    return c;
 }

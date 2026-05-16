@@ -1,0 +1,19 @@
+# Сгенерировано из Kreator.xml, диаграммы 0 и 0.0.
+# Примечание про адаптацию bundling/unbundling: см. bundling-unbundling.md.
+
+activity A0 "Работа с Креатором в контексте Разработчика" {
+    I1 "set process project"
+    I2 "start <named process>"
+    I3 "stop <identified process>"
+    I4 "act <identified process, input name, input value>"
+    O1 "show named process project"
+    O2 "show identified process"
+    O3 "show stopped process"
+    O4 "show acted process' output"
+    C1 "PSL"
+
+    A1 "Проектирование САПР" : I1,        C1 -> X11[O1], X12 "named process project"
+    A2 "Запуск САПР"         : I2, I[X12]    -> X21[O2], X22 "identified process"
+    A3 "Останов САПР"        : I3, I[X22]    -> X31[O3]
+    A4 "Актирование САПР"    : I4, I[X22]    -> X41[O4]
+}

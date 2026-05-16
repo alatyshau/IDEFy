@@ -1,0 +1,98 @@
+{
+    "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+    "name": "IDEF0",
+    "scopeName": "source.idef0",
+    "patterns": [
+        { "include": "#comment" },
+        { "include": "#keyword" },
+        { "include": "#activity-id" },
+        { "include": "#arrow-id" },
+        { "include": "#string" },
+        { "include": "#punctuation" }
+    ],
+    "repository": {
+        "comment": {
+            "name": "comment.line.number-sign.idef0",
+            "match": "#.*$"
+        },
+        "keyword": {
+            "name": "entity.name.activity.idef0",
+            "match": "\\b(activity|context)\\b"
+        },
+        "string": {
+            "name": "string.quoted.double.idef0",
+            "begin": "\"",
+            "end": "\"",
+            "patterns": [
+                {
+                    "name": "constant.character.escape.idef0",
+                    "match": "\\\\."
+                }
+            ]
+        },
+        "activity-id": {
+            "patterns": [
+                {
+                    "name": "entity.name.activity.idef0",
+                    "match": "\\.{3}A(?:0|[1-9a-z]+)\\b"
+                },
+                {
+                    "name": "entity.name.activity.idef0",
+                    "match": "\\bA-0\\b"
+                },
+                {
+                    "name": "entity.name.activity.idef0",
+                    "match": "\\bA(?:0|[1-9a-z]+)\\b"
+                }
+            ]
+        },
+        "arrow-id": {
+            "patterns": [
+                {
+                    "name": "entity.name.arrow.input.idef0",
+                    "match": "\\bI[1-9a-z]+\\b"
+                },
+                {
+                    "name": "entity.name.arrow.output.idef0",
+                    "match": "\\bO[1-9a-z]+\\b"
+                },
+                {
+                    "name": "entity.name.arrow.control.idef0",
+                    "match": "\\bC[1-9a-z]+\\b"
+                },
+                {
+                    "name": "entity.name.arrow.mechanism.idef0",
+                    "match": "\\bM[1-9a-z]+\\b"
+                },
+                {
+                    "name": "entity.name.arrow.internal.idef0",
+                    "match": "\\bX[1-9a-z]+\\b"
+                },
+                {
+                    "name": "entity.name.arrow.tunnel.idef0",
+                    "match": "\\bT[1-9a-z]+\\b"
+                }
+            ]
+        },
+        "punctuation": {
+            "patterns": [
+                {
+                    "name": "entity.name.activity.idef0",
+                    "match": "[\\{\\}]"
+                },
+                {
+                    "name": "punctuation.section.brackets.idef0",
+                    "match": "[\\[\\]]"
+                },
+                {
+                    "name": "punctuation.separator.idef0",
+                    "match": ","
+                },
+                {
+                    "name": "entity.name.activity.idef0",
+                    "match": ":|->"
+                }
+            ]
+        }
+    }
+}

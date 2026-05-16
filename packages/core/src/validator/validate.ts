@@ -9,7 +9,13 @@ import type {
     SourceRange,
 } from "../types.js";
 import { computeProjectName } from "../assembler/assemble.js";
-import { isActivityId, parentActivityId } from "../ids.js";
+import {
+    isActivityId,
+    isValidArrowId,
+    isWellFormedActivityId,
+    isWellFormedArrowId,
+    parentActivityId,
+} from "../ids.js";
 
 const ZERO_RANGE: SourceRange = {
     start: { line: 1, column: 1 },
@@ -177,31 +183,20 @@ function checkPerFileRules(project: IdefProject): Diagnostic[] {
 
         if (ast.kind === "context") continue;
 
-        // Rule 8: activity id format.
-        if (!isActivityId(ast.id)) {
-            diags.push({
-                severity: "error",
-                source: "validator",
-                ruleId: "validator.rule-8",
-                range: ast.location.range,
-                file: file.path,
-                message: `Invalid activity ID format: '${ast.id}'`,
-            });
+        // Rule 8: activity id format. Two grades per spec/04-validator.md §8:
+        //   - structural violation (not well-formed) → error
+        //   - case violation (well-formed but suffix has uppercase letters) → warning
+        diags.push(...activityIdDiagnostics(ast.id, ast.location.range, file.path, false));
+
+        // Rule 8 for block IDs.
+        for (const b of ast.blocks) {
+            diags.push(
+                ...activityIdDiagnostics(b.id, b.location.range, file.path, true),
+            );
         }
 
-        // Rule 8 for block IDs and Rule 17 for block count.
-        for (const b of ast.blocks) {
-            if (!isActivityId(b.id)) {
-                diags.push({
-                    severity: "error",
-                    source: "validator",
-                    ruleId: "validator.rule-8",
-                    range: b.location.range,
-                    file: file.path,
-                    message: `Invalid functional block ID format: '${b.id}'`,
-                });
-            }
-        }
+        // Rule 8 for arrow IDs — boundary header + produced/consumed refs.
+        diags.push(...arrowIdDiagnosticsForActivity(ast, file.path));
 
         const n = ast.blocks.length;
         if (n > 35) {
@@ -211,7 +206,7 @@ function checkPerFileRules(project: IdefProject): Diagnostic[] {
                 ruleId: "validator.rule-17",
                 range: ast.location.range,
                 file: file.path,
-                message: `Activity '${ast.id}' has ${n} functional blocks; allowed suffix alphabet (1..9, A..Z) gives a hard limit of 35`,
+                message: `Activity '${ast.id}' has ${n} functional blocks; allowed suffix alphabet (1..9, a..z) gives a hard limit of 35`,
             });
         } else if (n >= 10) {
             diags.push({
@@ -233,7 +228,7 @@ function checkPerFileRules(project: IdefProject): Diagnostic[] {
         // missing (not because A11 is rootless), and that's not a rule-7 issue.
         if (
             ast.id !== "A0" &&
-            isActivityId(ast.id) &&
+            isWellFormedActivityId(ast.id) &&
             !project.activities.get(ast.id)?.parent &&
             project.activities.has("A0")
         ) {
@@ -439,4 +434,88 @@ function isFileDirectlyInRoot(projectRoot: string, filePath: string): boolean {
     if (!path.startsWith(root + "/")) return false;
     const rel = path.substring(root.length + 1);
     return !rel.includes("/");
+}
+
+// ─── Rule 8 helpers ──────────────────────────────────────────────────────────
+
+function activityIdDiagnostics(
+    id: string,
+    range: SourceRange,
+    file: string,
+    isFunctionalBlock: boolean,
+): Diagnostic[] {
+    const noun = isFunctionalBlock ? "functional block ID" : "activity ID";
+    if (!isWellFormedActivityId(id)) {
+        return [{
+            severity: "error",
+            source: "validator",
+            ruleId: "validator.rule-8",
+            range,
+            file,
+            message: `Invalid ${noun} format: '${id}' (expected A0 or A<suffix>; suffix must use 1..9, a..z and must not contain '0')`,
+        }];
+    }
+    if (!isActivityId(id)) {
+        return [{
+            severity: "warning",
+            source: "validator",
+            ruleId: "validator.rule-8",
+            range,
+            file,
+            message: `${capitalize(noun)} '${id}' uses uppercase letters in the suffix; canonical form is lowercase (e.g., '${id.charAt(0)}${id.slice(1).toLowerCase()}')`,
+        }];
+    }
+    return [];
+}
+
+function arrowIdDiagnosticsForActivity(
+    ast: ActivityAST,
+    file: string,
+): Diagnostic[] {
+    const diags: Diagnostic[] = [];
+    for (const b of ast.boundary) {
+        diags.push(...arrowIdDiagnostics(b.id, b.location.range, file, "boundary arrow"));
+    }
+    for (const block of ast.blocks) {
+        for (const c of block.consumed) {
+            const id = c.kind === "parent" ? c.id : c.sourceId;
+            diags.push(...arrowIdDiagnostics(id, c.location.range, file, "consumed arrow"));
+        }
+        for (const p of block.produced) {
+            diags.push(...arrowIdDiagnostics(p.id, p.location.range, file, "produced arrow"));
+            if (p.kind === "boundary-out" || p.kind === "tunnel-out") {
+                diags.push(...arrowIdDiagnostics(p.mappedTo, p.location.range, file, "boundary mapping"));
+            }
+        }
+    }
+    return diags;
+}
+
+function arrowIdDiagnostics(
+    id: string,
+    range: SourceRange,
+    file: string,
+    role: string,
+): Diagnostic[] {
+    if (!isWellFormedArrowId(id)) {
+        // Structurally-invalid arrow IDs are already flagged by parser-side
+        // diagnostics with precise context; rule-8 only emits a warning-grade
+        // diagnostic for the case-violation tier.
+        return [];
+    }
+    if (!isValidArrowId(id)) {
+        return [{
+            severity: "warning",
+            source: "validator",
+            ruleId: "validator.rule-8",
+            range,
+            file,
+            message: `${capitalize(role)} '${id}' uses uppercase letters in the suffix; canonical form is lowercase (e.g., '${id.charAt(0)}${id.slice(1).toLowerCase()}')`,
+        }];
+    }
+    return [];
+}
+
+function capitalize(s: string): string {
+    return s.length === 0 ? s : s.charAt(0).toUpperCase() + s.slice(1);
 }

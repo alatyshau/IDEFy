@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isActivityId } from "../src/ids.js";
+import {
+    isActivityId,
+    isValidArrowId,
+    isWellFormedActivityId,
+    isWellFormedArrowId,
+} from "../src/ids.js";
 import {
     diagnosticsForNestedProjects,
     validate,
@@ -7,26 +12,74 @@ import {
 } from "../src/validator/validate.js";
 import { loadFixtureProject } from "./fixtures.js";
 
-describe("isActivityId: regex enforces suffix alphabet [1-9A-Z]", () => {
+describe("ids predicates: canonical (strict) vs well-formed (lenient)", () => {
+    it("isActivityId is strict: rejects uppercase letters in suffix", () => {
+        expect(isActivityId("Aa")).toBe(true);
+        expect(isActivityId("AA")).toBe(false);
+        expect(isActivityId("A1a")).toBe(true);
+        expect(isActivityId("A1A")).toBe(false);
+    });
+    it("isWellFormedActivityId is lenient: accepts uppercase suffix letters", () => {
+        expect(isWellFormedActivityId("Aa")).toBe(true);
+        expect(isWellFormedActivityId("AA")).toBe(true);
+        expect(isWellFormedActivityId("A1A")).toBe(true);
+        expect(isWellFormedActivityId("AABC")).toBe(true);
+    });
+    it("isWellFormedActivityId still rejects structural violations (0 in suffix, bad chars, lc prefix)", () => {
+        expect(isWellFormedActivityId("A10")).toBe(false);
+        expect(isWellFormedActivityId("A1z0")).toBe(false);
+        expect(isWellFormedActivityId("A_1")).toBe(false);
+        expect(isWellFormedActivityId("a1")).toBe(false);
+        expect(isWellFormedActivityId("B0")).toBe(false);
+    });
+    it("isValidArrowId is strict: rejects uppercase letters in suffix", () => {
+        expect(isValidArrowId("Ia")).toBe(true);
+        expect(isValidArrowId("IA")).toBe(false);
+        expect(isValidArrowId("X1a")).toBe(true);
+        expect(isValidArrowId("X1A")).toBe(false);
+        expect(isValidArrowId("Iabc")).toBe(true);
+        expect(isValidArrowId("IABC")).toBe(false);
+    });
+    it("isWellFormedArrowId is lenient: accepts uppercase suffix letters", () => {
+        expect(isWellFormedArrowId("IA")).toBe(true);
+        expect(isWellFormedArrowId("IABC")).toBe(true);
+        expect(isWellFormedArrowId("X1A")).toBe(true);
+    });
+    it("isWellFormedArrowId still rejects structural violations (0 in suffix, bad chars, lc prefix)", () => {
+        expect(isWellFormedArrowId("I10")).toBe(false);
+        expect(isWellFormedArrowId("I0")).toBe(false);
+        expect(isWellFormedArrowId("I_1")).toBe(false);
+        expect(isWellFormedArrowId("i1")).toBe(false);
+        // Prefix must be one of I/O/C/M/X/T — `Z1` rejected.
+        expect(isWellFormedArrowId("Z1")).toBe(false);
+    });
+});
+
+describe("isActivityId: regex enforces suffix alphabet [1-9a-z]", () => {
     it("accepts A0 root and standard descendants", () => {
         expect(isActivityId("A0")).toBe(true);
         expect(isActivityId("A1")).toBe(true);
         expect(isActivityId("A9")).toBe(true);
-        expect(isActivityId("AA")).toBe(true);
-        expect(isActivityId("AZ")).toBe(true);
+        expect(isActivityId("Aa")).toBe(true);
+        expect(isActivityId("Az")).toBe(true);
         expect(isActivityId("A11")).toBe(true);
-        expect(isActivityId("A1Z")).toBe(true);
-        expect(isActivityId("A1A1")).toBe(true);
+        expect(isActivityId("A1z")).toBe(true);
+        expect(isActivityId("A1a1")).toBe(true);
     });
     it("rejects 0 inside suffix (reserved for root)", () => {
         expect(isActivityId("A10")).toBe(false);
         expect(isActivityId("A20")).toBe(false);
-        expect(isActivityId("A1Z0")).toBe(false);
+        expect(isActivityId("A1z0")).toBe(false);
     });
-    it("rejects non-A prefixes, lowercase, special chars", () => {
+    it("rejects uppercase letters in suffix (lowercase only)", () => {
+        expect(isActivityId("AA")).toBe(false);
+        expect(isActivityId("AZ")).toBe(false);
+        expect(isActivityId("A1Z")).toBe(false);
+        expect(isActivityId("A1A1")).toBe(false);
+    });
+    it("rejects non-A prefixes, lowercase prefix, special chars", () => {
         expect(isActivityId("B0")).toBe(false);
         expect(isActivityId("a0")).toBe(false);
-        expect(isActivityId("A1z")).toBe(false);
         expect(isActivityId("A-1")).toBe(false);
     });
 });
@@ -119,6 +172,65 @@ describe("validator: rule 13/14 — project path structure", () => {
         const { project } = loadFixtureProject("validator", "");
         const diags = validate(project);
         expect(diags.some((d) => d.ruleId === "validator.rule-14")).toBe(true);
+    });
+});
+
+describe("validator: rule 8 — case violations are warnings, structural are errors", () => {
+    it("uppercase-suffix activity/arrow IDs produce rule-8 WARNINGS (not errors)", () => {
+        const { project } = loadFixtureProject(
+            "validator",
+            "rule8_case_warning/foo"
+        );
+        const rule8 = validate(project).filter(
+            (d) => d.ruleId === "validator.rule-8"
+        );
+        expect(rule8.length).toBeGreaterThan(0);
+        // Every rule-8 diag must be a warning (no error severity).
+        expect(rule8.every((d) => d.severity === "warning")).toBe(true);
+        // Specific IDs must be flagged with canonical-form hint.
+        const messages = rule8.map((d) => d.message).join("\n");
+        expect(messages).toMatch(/IABC.*Iabc/);
+        expect(messages).toMatch(/AABC.*Aabc/);
+        expect(messages).toMatch(/XABC.*Xabc/);
+    });
+    it("canonical IDs in the same fixture do NOT produce rule-8 diagnostics", () => {
+        const { project } = loadFixtureProject(
+            "validator",
+            "rule8_case_warning/foo"
+        );
+        const rule8Messages = validate(project)
+            .filter((d) => d.ruleId === "validator.rule-8")
+            .map((d) => d.message)
+            .join("\n");
+        // A1, I1, O1, X11 are canonical — should not appear in rule-8 messages
+        // EXCEPT as "expected canonical form" hints. We assert that they don't
+        // appear as the offending ID by checking the leading quoted-ID pattern.
+        expect(rule8Messages).not.toMatch(/'A1'/);
+        expect(rule8Messages).not.toMatch(/'I1'/);
+        expect(rule8Messages).not.toMatch(/'O1'/);
+        expect(rule8Messages).not.toMatch(/'X11'/);
+    });
+    it("case-only fixture produces zero rule-8 ERRORS (only warnings)", () => {
+        const { project } = loadFixtureProject(
+            "validator",
+            "rule8_case_warning/foo"
+        );
+        const rule8Errors = validate(project).filter(
+            (d) => d.ruleId === "validator.rule-8" && d.severity === "error"
+        );
+        expect(rule8Errors).toEqual([]);
+    });
+    it("structurally invalid id (A10, 0 in suffix) produces rule-8 ERROR", () => {
+        const { project } = loadFixtureProject(
+            "validator",
+            "rule8_structural/foo"
+        );
+        const rule8 = validate(project).filter(
+            (d) => d.ruleId === "validator.rule-8"
+        );
+        const errors = rule8.filter((d) => d.severity === "error");
+        expect(errors.length).toBeGreaterThan(0);
+        expect(errors.some((d) => /A10/.test(d.message))).toBe(true);
     });
 });
 

@@ -1,0 +1,12 @@
+# Case-violation fixture per spec/04-validator.md §rule 8.
+# All IDs are well-formed (no `0` in suffix, no special chars), but several
+# use UPPERCASE suffix letters where canonical form is lowercase.
+# Expected: rule-8 WARNINGS (not errors) for the non-canonical IDs.
+activity A0 "case test" {
+    I1 "ok-canonical"
+    IABC "case-violation: should be Iabc"
+    O1 "boundary out"
+
+    A1 "ok-canonical" : I1 -> X11[O1]
+    AABC "case-violation: should be Aabc" : IABC -> XABC[O1]
+}

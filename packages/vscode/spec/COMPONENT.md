@@ -30,8 +30,10 @@ UI-контракты — в отдельном файле [`UI.md`](UI.md).
 
 ## Активация
 
-- `onLanguage:idef0` — при открытии `.idef0` файла.
-- `onCustomEditor:idefy.asciiViewer` — при открытии `.idef0.ascii` (через custom editor).
+Современные версии VS Code (`engine ^1.95`) автоматически выводят `onLanguage:`
+и `onCustomEditor:` события из `contributes.languages` / `contributes.customEditors`,
+поэтому в `package.json` они **не дублируются**. Явно объявляется только:
+
 - `onStartupFinished` — для авто-добавления `*.idef0.ascii` в `.gitignore` каждого workspace folder'а (см. ниже).
 
 ## Регистрация языков
@@ -48,35 +50,40 @@ languages: [
 
 ## TextMate-грамматика для `idef0`
 
-Минимальный набор scope'ов:
+Скоупы подобраны так, чтобы «activity-семья» (ключевые слова, активити-ID, фигурные скобки тела, операторы списка `:` / `->`) делила один и тот же цвет — стандартные темы окрашивают `entity.name.activity` одним foreground'ом.
 
-- `keyword.control.idef0` — `activity`, `context`.
-- `entity.name.activity.idef0` — ID активности в шапке и в позиции функционального блока.
-- `entity.name.arrow.input.idef0` / `.output` / `.control` / `.mechanism` / `.internal` / `.tunnel` — соответствующие ID стрелок.
+- `entity.name.activity.idef0` — `activity`, `context`, активити-ID (`A0`/`A1`/…/`A-0`/`...A0`), `{`, `}`, `:`, `->`. Шарят activity-цвет.
+- `entity.name.arrow.input.idef0` / `.output` / `.control` / `.mechanism` / `.internal` / `.tunnel` — соответствующие ID стрелок (fallback под semantic tokens).
 - `string.quoted.double.idef0` — строковые литералы.
 - `comment.line.number-sign.idef0` — `#` комментарии.
-- `punctuation.separator.idef0` — `;`, `,`, `->`, `:`, `[`, `]`, `{`, `}`.
+- `punctuation.section.brackets.idef0` — `[`, `]` вне bracket-форм (внутри bracket-форм цвет переопределяется semantic-token'ом outer-роли).
+- `punctuation.separator.idef0` — `,` (визуально приглушается декоратором в `descriptionForeground`).
 
-Точный JSON грамматики — артефакт Phase 3, генерируется по этой спеке.
+Точный JSON грамматики — `syntaxes/idef0.tmLanguage.json`.
 
 ## Semantic tokens для `idef0`
 
 Реализуется через `vscode.languages.registerDocumentSemanticTokensProvider`.
 
-**Token types** (mapping к ролям стрелок):
+**Один кастомный token type `idef0Arrow` с шестью modifiers**, по одному на ролевой префикс ID (см. [`UI.md`](UI.md) §Semantic tokens и `package.json` → `contributes.semanticTokenTypes` / `semanticTokenModifiers` / `semanticTokenScopes`):
 
-| Token type        | Роль                  | Цвет по умолчанию    |
-|-------------------|-----------------------|----------------------|
-| `idef0.input`     | I — Input             | синий                |
-| `idef0.output`    | O — Output            | зелёный              |
-| `idef0.control`   | C — Control           | жёлтый               |
-| `idef0.mechanism` | M — Mechanism         | фиолетовый           |
-| `idef0.internal`  | X — Internal arrow    | серый                |
-| `idef0.tunnel`    | T — Tunnel            | оранжевый            |
+| Modifier    | Роль                  | Что красится                             |
+|-------------|-----------------------|------------------------------------------|
+| `input`     | I — Input             | I-стрелки, outer `I` в `I[...]` + скобки |
+| `output`    | O — Output            | O-стрелки, inner `O` в `X[O*]`           |
+| `control`   | C — Control           | C-стрелки, outer `C` в `C[...]` + скобки |
+| `mechanism` | M — Mechanism         | M-стрелки, outer `M` в `M[...]` + скобки |
+| `internal`  | X — Internal arrow    | X-стрелки, inner `X` в `*[X*]`, outer X  |
+| `tunnel`    | T — Tunnel            | T-туннели, inner `T` в `*[T*]`           |
 
-Hex-коды и адаптация под тёмные/светлые темы — задача Phase 3. Цвета задаются через стандартный VS Code механизм `semanticTokenColors` в contributions; пользователь может переопределить.
+**Цвета задаются детерминированно через `TextEditorDecorationType`**, не через `semanticTokenColors` в contributions. Это сознательное отклонение: семантические токены сами по себе не позволяют расширению гарантировать конкретный цвет — итоговый foreground зависит от темы пользователя. Палитра и hex-коды зафиксированы в [`UI.md`](UI.md) §Цветовая палитра DSL. Modifiers + `semanticTokenScopes` маппинг на TextMate scope'ы оставлены ради совместимости с темами, которые таки решат покрасить через `editor.semanticTokenColorCustomizations`.
 
-**Источник информации:** `@idefy/core` AST. Provider получает `TextDocument`, парсит содержимое (через `parse` из core), обходит AST и выдаёт `SemanticTokens` для каждого упоминания ID стрелки. Source locations из AST маппятся в `Range` VS Code напрямую.
+**Источник информации:** лексический скан исходного текста (см. `src/providers/arrow-scan.ts`). Спека изначально предписывала AST-walk через `core.parse`, но имплементация осознанно отклонилась по двум причинам:
+
+1. **Робастность.** При наличии parse errors AST-провайдер потерял бы все семантические токены, пока пользователь печатает; лексический скан продолжает раскрашивать ID стрелок и в «битом» файле.
+2. **Sub-token positions.** Ссылки вида `I[X11]` или `X11[T1]` несут на AST-узле один композитный `location`. Восстановление inner-vs-outer диапазонов всё равно требует посимвольного скана внутри этого диапазона, что фактически и делает лексический провайдер — напрямую.
+
+DSL гарантирует, что роль однозначно кодируется первой буквой ID, поэтому лексический скан даёт тот же результат, что AST-walk на валидных файлах, и более полезное поведение на невалидных. Strings (`"..."`) и `#`-комментарии skip-руются, чтобы идентификаторо-подобные подстроки в литералах не раскрашивались.
 
 **Производительность:** provider вызывается VS Code'ом по запросу, в т.ч. инкрементально через `provideDocumentSemanticTokensEdits` (опциональный API). В текущей итерации реализуем только полное `provideDocumentSemanticTokens` (нет инкрементальности); инкрементальность — `[TODO]` форвард, если упрёмся в производительность на больших файлах.
 

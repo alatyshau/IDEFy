@@ -58,10 +58,12 @@ ContextAST {
 ## Идентификаторы
 
 ```
-type ActivityId = string    // 'A0', 'A1', 'A11', 'AA', 'A1Z' и т.д. Формат — spec/01-dsl.md.
+type ActivityId = string    // 'A0', 'A1', 'A11', 'Aa', 'A1z' и т.д. Префикс 'A'
+                            // заглавный, суффикс — `[1-9a-z]+`. Формат — spec/01-dsl.md.
 type ContextId = 'A-0'      // в текущей спеке единственное значение
 type FileId = ActivityId | ContextId   // что может быть в имени файла до первой точки
-type ArrowId = string       // 'I1', 'O2', 'C42', 'M1', 'X11', 'T1'. Префикс — роль.
+type ArrowId = string       // 'I1', 'O2', 'C4', 'M1', 'X11', 'T1', 'Iabc', 'X1a'.
+                            // Префикс — роль (заглавная), суффикс — `[1-9a-z]+`.
 type ArrowRole = 'I' | 'O' | 'C' | 'M' | 'X' | 'T'
 ```
 

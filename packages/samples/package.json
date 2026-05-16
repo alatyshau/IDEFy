@@ -1,0 +1,8 @@
+{
+    "name": "@idefy/samples",
+    "version": "0.0.0",
+    "description": "Reference IDEF0 models in .idef0 DSL — smoke material for parser/validator/UI.",
+    "license": "MIT",
+    "private": true,
+    "scripts": {}
+}

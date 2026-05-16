@@ -1,0 +1,136 @@
+{
+    "name": "@idefy/vscode",
+    "displayName": "IDEFy",
+    "description": "Text DSL for IDEF0 modelling — editor support, validation, ASCII viewer.",
+    "version": "0.0.0",
+    "license": "MIT",
+    "private": true,
+    "publisher": "idefy",
+    "engines": {
+        "vscode": "^1.95.0",
+        "node": ">=20"
+    },
+    "categories": ["Programming Languages", "Linters", "Visualization"],
+    "main": "./dist/extension.js",
+    "activationEvents": [
+        "onStartupFinished"
+    ],
+    "contributes": {
+        "languages": [
+            {
+                "id": "idef0",
+                "aliases": ["IDEF0"],
+                "extensions": [".idef0"],
+                "configuration": "./language-configuration.json"
+            },
+            {
+                "id": "idef0.ascii",
+                "aliases": ["IDEF0 ASCII"],
+                "extensions": [".idef0.ascii"]
+            }
+        ],
+        "grammars": [
+            {
+                "language": "idef0",
+                "scopeName": "source.idef0",
+                "path": "./syntaxes/idef0.tmLanguage.json"
+            }
+        ],
+        "semanticTokenTypes": [
+            { "id": "idef0Arrow", "description": "An IDEF0 arrow reference" }
+        ],
+        "semanticTokenModifiers": [
+            { "id": "input", "description": "Input role (I)" },
+            { "id": "output", "description": "Output role (O)" },
+            { "id": "control", "description": "Control role (C)" },
+            { "id": "mechanism", "description": "Mechanism role (M)" },
+            { "id": "internal", "description": "Internal arrow (X)" },
+            { "id": "tunnel", "description": "Tunnel (T)" }
+        ],
+        "semanticTokenScopes": [
+            {
+                "language": "idef0",
+                "scopes": {
+                    "idef0Arrow.input": ["entity.name.arrow.input.idef0"],
+                    "idef0Arrow.output": ["entity.name.arrow.output.idef0"],
+                    "idef0Arrow.control": ["entity.name.arrow.control.idef0"],
+                    "idef0Arrow.mechanism": ["entity.name.arrow.mechanism.idef0"],
+                    "idef0Arrow.internal": ["entity.name.arrow.internal.idef0"],
+                    "idef0Arrow.tunnel": ["entity.name.arrow.tunnel.idef0"]
+                }
+            }
+        ],
+        "customEditors": [
+            {
+                "viewType": "idefy.asciiViewer",
+                "displayName": "IDEFy ASCII Viewer",
+                "selector": [
+                    { "filenamePattern": "*.idef0.ascii" }
+                ],
+                "priority": "default"
+            }
+        ],
+        "commands": [
+            {
+                "command": "idefy.formatDocument",
+                "title": "IDEFy: Format Document"
+            },
+            {
+                "command": "idefy.viewAscii",
+                "title": "IDEFy: View ASCII",
+                "icon": "$(preview)"
+            }
+        ],
+        "keybindings": [
+            {
+                "command": "idefy.formatDocument",
+                "key": "shift+alt+f",
+                "when": "editorLangId == idef0 && idefy.inProject"
+            }
+        ],
+        "menus": {
+            "editor/context": [
+                {
+                    "command": "idefy.formatDocument",
+                    "when": "editorLangId == idef0 && idefy.inProject",
+                    "group": "1_modification"
+                }
+            ],
+            "editor/title": [
+                {
+                    "command": "idefy.viewAscii",
+                    "when": "resourceLangId == idef0 && idefy.inProject",
+                    "group": "navigation"
+                }
+            ]
+        },
+        "configuration": {
+            "title": "IDEFy",
+            "properties": {
+                "idefy.formatter.maxLineWidth": {
+                    "type": "number",
+                    "default": 120,
+                    "description": "Maximum line width that triggers Mode 2/3 in the formatter."
+                }
+            }
+        }
+    },
+    "scripts": {
+        "build": "tsup",
+        "typecheck": "tsc --noEmit",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "vsce:package": "vsce package --no-dependencies --out dist/idefy.vsix"
+    },
+    "dependencies": {
+        "@idefy/core": "workspace:*",
+        "@idefy/loader": "workspace:*"
+    },
+    "devDependencies": {
+        "@types/node": "^25.8.0",
+        "@types/vscode": "^1.95.0",
+        "tsup": "^8.3.5",
+        "typescript": "^5.6.3",
+        "vitest": "^2.1.5"
+    }
+}

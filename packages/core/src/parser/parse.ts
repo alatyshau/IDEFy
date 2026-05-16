@@ -21,9 +21,9 @@ import type {
 } from "../types.js";
 import {
     extractFileId,
-    isActivityId,
-    isValidArrowId,
-    isValidArrowIdInRoles,
+    isWellFormedActivityId,
+    isWellFormedArrowId,
+    isWellFormedArrowIdInRoles,
     roleOf,
 } from "../ids.js";
 import type { ArrowRole } from "../types.js";
@@ -95,16 +95,22 @@ function isAtStartOfDecl(stream: CharStream, container: ContainerKind): boolean 
         // X and T at line-start are NOT start-of-decl — X never appears as
         // top-level; T is wrong-container (parser treats it as continuation, the
         // separate parseDeclarationItem dispatch catches misplaced tunnel).
+        //
+        // Suffix alphabet is `[1-9a-z]` per spec/01-dsl.md; the heuristic also
+        // accepts `0` (for the `A0` root form, when it appears) and uppercase
+        // letters so that misspellings like `AA` still get recognised as
+        // declaration starts — the validator then emits rule-8 with a precise
+        // location instead of letting the line collapse into a continuation.
         if (c === "I" || c === "O" || c === "C" || c === "M" || c === "A") {
             const c2 = stream.peekAhead(1);
-            return c2 !== null && /[A-Z0-9-]/.test(c2);
+            return c2 !== null && /[A-Za-z0-9-]/.test(c2);
         }
         return false;
     }
     // context body: T* tunnel or `...A<id>` rootref.
     if (c === "T") {
         const c2 = stream.peekAhead(1);
-        return c2 !== null && /[A-Z0-9]/.test(c2);
+        return c2 !== null && /[A-Za-z0-9]/.test(c2);
     }
     if (c === ".") {
         return stream.peekAhead(1) === ".";
@@ -170,10 +176,10 @@ function validateArrowAt(
     errors: Diagnostic[],
     positionLabel: string
 ): void {
-    if (!isValidArrowIdInRoles(id, allowedRoles)) {
-        const reason = isValidArrowId(id)
+    if (!isWellFormedArrowIdInRoles(id, allowedRoles)) {
+        const reason = isWellFormedArrowId(id)
             ? `role '${id.charAt(0)}' is not allowed here`
-            : "id must match <role-letter><uppercase alphanumeric suffix>";
+            : "id must match <role-letter><suffix using 1..9, a..z>";
         const rolesStr = [...allowedRoles].join("/");
         addError(
             errors,
@@ -393,11 +399,11 @@ function parseDeclarationItem(
     consumeWhitespaceMultilineForDecl(stream);
     if (stream.peek() === ":") {
         stream.next();
-        if (!isActivityId(idTok.value)) {
+        if (!isWellFormedActivityId(idTok.value)) {
             addError(
                 errors,
                 idTok.location,
-                `Functional block id '${idTok.value}' is not a valid activity id (expected A0 or A<suffix> where suffix uses 1..9, A..Z)`
+                `Functional block id '${idTok.value}' is not a structurally valid activity id (expected A0 or A<suffix>; suffix must not contain '0' or non-alphanumerics)`
             );
         }
         return parseFunctionalBlockRest(

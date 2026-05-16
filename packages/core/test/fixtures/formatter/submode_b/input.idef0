@@ -12,7 +12,7 @@ activity A0 "x" {
     I7 "in"
     I8 "in"
     I9 "in"
-    IA "in"
+    Ia "in"
     C1 "c"
     C2 "c"
     C3 "c"
@@ -22,7 +22,7 @@ activity A0 "x" {
     C7 "c"
     C8 "c"
     C9 "c"
-    CA "c"
+    Ca "c"
     M1 "m"
     M2 "m"
     M3 "m"
@@ -32,7 +32,7 @@ activity A0 "x" {
     M7 "m"
     M8 "m"
     M9 "m"
-    MA "m"
+    Ma "m"
 
-    A1 "decomp" : I1, I2, I3, I4, I5, I6, I7, I8, I9, IA, C1, C2, C3, C4, C5, C6, C7, C8, C9, CA, M1, M2, M3, M4, M5, M6, M7, M8, M9, MA -> X11 "out1", X12 "out2"
+    A1 "decomp" : I1, I2, I3, I4, I5, I6, I7, I8, I9, Ia, C1, C2, C3, C4, C5, C6, C7, C8, C9, Ca, M1, M2, M3, M4, M5, M6, M7, M8, M9, Ma -> X11 "out1", X12 "out2"
 }

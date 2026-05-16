@@ -158,11 +158,11 @@ describe("parser: error fixtures enforce arrow grammar", () => {
             "parser/errors/underscore-id.idef0"
         );
         expect(
-            errors.some((e) =>
-                /arrow id 'I_1' invalid.*uppercase alphanumeric suffix/.test(
-                    e.message
-                )
-            )
+            errors.some(
+                (e) =>
+                    /arrow id 'I_1' invalid/.test(e.message) &&
+                    /1\.\.9, a\.\.z/.test(e.message),
+            ),
         ).toBe(true);
     });
     it("flags activity id with 0 in suffix (e.g., A10)", () => {
@@ -171,7 +171,7 @@ describe("parser: error fixtures enforce arrow grammar", () => {
         );
         expect(
             errors.some((e) =>
-                /Functional block id 'A10' is not a valid activity id/.test(
+                /Functional block id 'A10' is not a structurally valid activity id/.test(
                     e.message
                 )
             )

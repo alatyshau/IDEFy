@@ -12,7 +12,7 @@ activity A0 "many blocks" {
     A7 "b7" : I1 -> X71[O1]
     A8 "b8" : I1 -> X81[O1]
     A9 "b9" : I1 -> X91[O1]
-    AA "bA" : I1 -> XA1[O1]
-    AB "bB" : I1 -> XB1[O1]
-    AC "bC" : I1 -> XC1[O1]
+    Aa "ba" : I1 -> Xa1[O1]
+    Ab "bb" : I1 -> Xb1[O1]
+    Ac "bc" : I1 -> Xc1[O1]
 }
