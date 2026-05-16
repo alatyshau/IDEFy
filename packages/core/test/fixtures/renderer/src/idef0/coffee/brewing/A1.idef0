@@ -1,0 +1,4 @@
+activity A1 "Leaf" {
+    I1 "in"
+    O1 "out"
+}

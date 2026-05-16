@@ -1,0 +1,4 @@
+# Second A-0 in a subdirectory — assembler should flag this.
+context A-0 "duplicate context" {
+    T2 "t"
+}

@@ -1,0 +1,5 @@
+activity A0 "Root has only A1, no A11 reference" {
+    I1 "in"
+
+    A1 "child" : I1 -> X11[O1]
+}

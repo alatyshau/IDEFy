@@ -1,0 +1,5 @@
+context A-0 "Duplicate-id project" {
+    T1 "t"
+
+    ...A0
+}

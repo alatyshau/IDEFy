@@ -1,0 +1,4 @@
+# Two context files in the same project root → rule 12 fires.
+context A-0 "duplicate context in root" {
+    T2 "t"
+}

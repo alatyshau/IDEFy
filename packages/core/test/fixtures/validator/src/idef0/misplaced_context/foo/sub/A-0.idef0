@@ -1,0 +1,4 @@
+# A-0 must live directly in project root, not in a subdirectory → rule 12 fires.
+context A-0 "misplaced context" {
+    T1 "t"
+}

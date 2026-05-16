@@ -1,0 +1,8 @@
+# Mode 2 trigger: block line in Mode 1 would exceed maxLineWidth (120).
+# Only ONE own-described produced arrow + long name → Mode 2, not Mode 3.
+
+activity A0 "x" {
+    I1 "in"
+
+    A13 "Задание входов и выходов процесса — длинное имя для триггера Mode 2" : I[X112], I[X113], I[X114], C1 -> X131 "Спецификация входов и выходов процесса"
+}

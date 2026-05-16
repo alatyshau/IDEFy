@@ -1,0 +1,4 @@
+# Filename says A0, header says B0 → rule 10 fires. Also rule 8 (B0 is not a valid activity id).
+activity B0 "wrong header id" {
+    I1 "in"
+}

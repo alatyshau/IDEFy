@@ -1,0 +1,33 @@
+# Spike code (transient — kept locally for verification, deleted after iteration close).
+# Архивные выводы каждого спайка переносятся в саговую папку (`sagas/<iteration>/`).
+/spike/
+
+# Build artifacts
+node_modules/
+out/
+dist/
+coverage/
+*.tsbuildinfo
+*.vsix
+
+# Generated DSL sidecars (per mvp-spec §S1_11 — sidecars are gitignored by default;
+# the VS Code extension auto-regenerates them on format).
+*.idef0.ascii
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+
+# Environment
+.env
+.env.*.local
+
+# IDE artifacts (JetBrains; .vscode/ is intentionally NOT ignored — settings.json,
+# launch.json, and recommended-extensions are project-scoped and worth committing).
+.idea/
+
+# OS noise
+.DS_Store
+Thumbs.db

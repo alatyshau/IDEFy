@@ -1,0 +1,6 @@
+# Boundary arrows must be I/O/C/M. X*/T* are not allowed here.
+
+activity A0 "bad roles in boundary" {
+    I1 "ok"
+    X9 "X is not a boundary role"
+}

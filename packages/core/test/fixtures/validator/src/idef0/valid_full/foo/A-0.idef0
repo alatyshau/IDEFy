@@ -1,0 +1,5 @@
+context A-0 "Valid full project" {
+    T1 "tunnel"
+
+    ...A0
+}

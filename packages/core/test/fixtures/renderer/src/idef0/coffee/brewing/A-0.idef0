@@ -1,0 +1,4 @@
+context A-0 "ctx" {
+    T1 "t"
+    ...A0
+}

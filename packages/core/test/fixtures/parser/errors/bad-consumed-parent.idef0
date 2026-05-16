@@ -1,0 +1,8 @@
+# Consumed parent-style arrows must be I/C/M only (spec/01-dsl.md).
+
+activity A0 "consumed parent must be I/C/M" {
+    I1 "in"
+    O1 "out"
+
+    A1 "block" : I1, O1 -> X11[O1]
+}

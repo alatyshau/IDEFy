@@ -1,0 +1,5 @@
+activity A0 "Root" {
+    I1 "in"
+
+    A1 "child" : I1 -> X11[O1]
+}

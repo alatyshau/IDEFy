@@ -1,0 +1,11 @@
+# Boundary arrows sort by role (I, O, C, M), then by id within role.
+
+activity A0 "boundary sort" {
+    I1 "in"
+    O1 "out"
+    O2 "out2"
+    C1 "ctrl"
+    M1 "mech"
+
+    A1 "b"    : I1, C1, M1 -> X11[O1]
+}

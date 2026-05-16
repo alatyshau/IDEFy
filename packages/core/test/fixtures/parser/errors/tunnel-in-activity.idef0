@@ -1,0 +1,4 @@
+activity A0 "tunnels live in context, not here" {
+    I1 "in"
+    T1 "stray tunnel decl — error"
+}

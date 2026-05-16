@@ -1,0 +1,4 @@
+activity A1 "Child" {
+    I1 "in"
+    O1 "out"
+}

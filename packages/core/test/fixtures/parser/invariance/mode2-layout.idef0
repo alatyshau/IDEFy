@@ -1,0 +1,12 @@
+# Same block as canonical-mode1 but formatted as Mode 2 (3 lines per block).
+
+activity A0 "host" {
+    I1 "in"
+    C1 "ctrl"
+    M1 "mech"
+    O1 "out"
+
+    A1 "decomp"
+        : I1, C1, M1
+        -> X11[O1], X12 "first internal", X13 "second internal"
+}

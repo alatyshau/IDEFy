@@ -1,0 +1,7 @@
+# Activity suffix uses 1..9, A..Z; 0 is reserved for root A0 (spec/01-dsl.md).
+
+activity A0 "A10 has 0 in suffix — invalid" {
+    I1 "in"
+
+    A10 "this id is invalid" : I1 -> X11 "out"
+}

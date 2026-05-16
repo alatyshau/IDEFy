@@ -1,0 +1,8 @@
+# Context file: tunnels sorted by id, optional ...A0 reference after blank line.
+
+context A-0 "Контекст" {
+    T2 "second tunnel"
+    T1 "first tunnel"
+
+    ...A0
+}

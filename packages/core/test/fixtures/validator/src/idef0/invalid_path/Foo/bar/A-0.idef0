@@ -1,0 +1,5 @@
+# Path contains 'Foo' (uppercase) → rule 13 fires.
+context A-0 "ctx" {
+    T1 "t"
+    ...A0
+}

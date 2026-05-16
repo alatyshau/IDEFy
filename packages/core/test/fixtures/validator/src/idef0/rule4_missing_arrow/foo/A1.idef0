@@ -1,0 +1,5 @@
+activity A1 "Child — missing C1 in boundary" {
+    I1 "in"
+    O1 "out"
+    M1 "mech"
+}

@@ -1,0 +1,21 @@
+# Mode 1 table alignment: four short blocks form an aligned table.
+# Input is intentionally un-aligned (random whitespace, out-of-order arrows).
+
+activity A0 "Recruiting" {
+    M2 "interviewer"
+    I1 "vacancy"
+    O1 "hire"
+    C1 "policy"
+    C2 "hiring bar"
+    C3 "rules"
+    C4 "budget"
+    M1 "recruiter"
+    M3 "coordinator"
+    M4 "HR-partner"
+    O2 "reject"
+
+    A1 "Search"   :I1, C2, C3, C[T2], M1, M3 -> X11 "candidates"
+    A4 "Onboard" : I[X31], C1, C2, M1, M2 -> X41[O1]
+    A3 "Offer" : I[X21], C4, C[T1], M1, M2 -> X31 "offer", X32[O2]
+    A2 "Interview" : I[X11], C3, M2, M4 -> X21 "scores"
+}

@@ -1,0 +1,12 @@
+# File-level header comment — pre-header floating.
+
+activity A0 "Comment stickiness demo" {
+    I1 "in"
+
+    # above-A2 group split by blank
+    A2 "second" : I1 -> X21 "y"
+    # below-A2 sticks (no blank between)
+
+    # above-A1 sticks (no blank between)
+    A1 "first" : I1 -> X11 "z"
+}

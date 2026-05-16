@@ -1,0 +1,4 @@
+activity A0 "...A0 is for context only" {
+    I1 "in"
+    ...A0
+}

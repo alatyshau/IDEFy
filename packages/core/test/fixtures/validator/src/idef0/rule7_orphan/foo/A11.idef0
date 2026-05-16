@@ -1,0 +1,7 @@
+# A11 has derived parent A1 — but A1.idef0 doesn't exist in this project.
+# Per cascade filter, rule 7 fires only on A11 (genuinely rootless because its
+# parent A1 is not in the project), not on A0 or other valid activities.
+activity A11 "orphan in the chain" {
+    I1 "in"
+    O1 "out"
+}

@@ -1,0 +1,5 @@
+context A-0 "Root context — in correct place" {
+    T1 "t"
+
+    ...A0
+}

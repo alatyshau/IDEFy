@@ -1,0 +1,5 @@
+# Arrow IDs use uppercase + digits only (spec/01-dsl.md, "Стрелки").
+
+activity A0 "underscore disallowed" {
+    I_1 "underscore is not allowed in arrow id"
+}

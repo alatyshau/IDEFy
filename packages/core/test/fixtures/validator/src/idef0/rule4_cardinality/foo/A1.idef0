@@ -1,0 +1,4 @@
+activity A1 "Child — only one O arrow" {
+    I1 "in"
+    O1 "out"
+}

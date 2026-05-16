@@ -1,0 +1,14 @@
+# Multiline functional block (Mode 3) — newlines after ',' and '->' are whitespace.
+
+activity A0 "Multi-line example" {
+    I1 "in1"
+    I2 "in2"
+    C1 "ctrl"
+
+    A11 "Разбор проекта процесса"
+        : I1, I2, C1
+        ->
+            X111 "set process name",
+            X112 "set input",
+            X113 "set output"
+}

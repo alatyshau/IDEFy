@@ -1,0 +1,4 @@
+# No A0.*.idef0 file → rule 11 fires.
+context A-0 "no root activity here" {
+    T1 "t"
+}

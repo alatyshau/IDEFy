@@ -1,0 +1,5 @@
+context A-0 "primary context" {
+    T1 "t"
+
+    ...A0
+}

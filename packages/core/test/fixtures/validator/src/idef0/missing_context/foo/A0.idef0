@@ -1,0 +1,4 @@
+# No A-0.*.idef0 context file → rule 12 fires.
+activity A0 "Root, no context" {
+    I1 "in"
+}

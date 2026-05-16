@@ -1,0 +1,11 @@
+# Boundary arrow `O2 "stray"` appears AFTER the first functional block A1 →
+# narrows the section order (boundary section must precede decomposition section).
+# Rule 18 fires.
+
+activity A0 "section order violation" {
+    I1 "in"
+    O1 "out"
+
+    A1 "child" : I1 -> X11[O1]
+    O2 "stray boundary after A1 — invalid by rule 18"
+}

@@ -1,0 +1,3 @@
+activity A0 "Name with \"quote\" and \\backslash" {
+    I1 "literal \"quotes\" inside"
+}

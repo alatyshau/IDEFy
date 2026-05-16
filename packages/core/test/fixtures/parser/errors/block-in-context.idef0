@@ -1,0 +1,4 @@
+context A-0 "functional blocks don't belong here either" {
+    T1 "ok"
+    A1 "block" : I1 -> X11 "out"
+}

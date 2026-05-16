@@ -1,0 +1,15 @@
+# Mode 3 trigger: block produces MORE THAN ONE arrow with own description (X.. "...").
+# X[O*]/X[T*] don't count as "own-described".
+
+activity A0 "x" {
+    I1 "in"
+    C1 "ctrl"
+
+    A11 "Разбор проекта процесса"
+        : I1, C1
+        ->
+            X111 "set process name",
+            X112 "set input",
+            X113 "set output",
+            X114 "kind"
+}

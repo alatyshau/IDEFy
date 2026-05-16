@@ -1,0 +1,7 @@
+activity A0 "trailer test" {
+    I1 "in"
+}
+
+# Everything below the closing `}` is ignored per spec/01-dsl.md.
+free-form garbage A1 ;;; { unbalanced
+not parsed

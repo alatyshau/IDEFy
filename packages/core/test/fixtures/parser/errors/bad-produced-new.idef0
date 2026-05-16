@@ -1,0 +1,7 @@
+# Produced own-described arrow MUST start with X (per spec/01-dsl.md).
+
+activity A0 "produced new arrow must be X*" {
+    I1 "in"
+
+    A1 "block" : I1 -> O1 "wrong — produced new must be X*"
+}

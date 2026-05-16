@@ -1,0 +1,13 @@
+# Comment stickiness through sort: comments travel with their block.
+# Per spec/02-formatting.md, the example illustrates that sorting reorders blocks
+# (A1 before A2) and brings each block's attached comments along.
+
+activity A0 "x" {
+    I1 "in"
+
+    A2 "second" : I1 -> X21 "y"
+    # below A2 — sticks to A2 (no blank between)
+
+    # above A1 — sticks to A1 (no blank between)
+    A1 "first" : I1 -> X11 "z"
+}

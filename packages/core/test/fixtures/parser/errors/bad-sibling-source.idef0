@@ -1,0 +1,7 @@
+# Sibling-form `<role>[<src>]`: src must be X*/T*. Using O1 here is wrong.
+
+activity A0 "bad sibling source" {
+    I1 "in"
+
+    A1 "block" : I[O1] -> X11 "out"
+}

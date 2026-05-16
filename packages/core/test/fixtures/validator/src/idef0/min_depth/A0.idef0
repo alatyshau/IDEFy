@@ -1,0 +1,3 @@
+activity A0 "Root at scan-root level — invalid" {
+    I1 "in"
+}

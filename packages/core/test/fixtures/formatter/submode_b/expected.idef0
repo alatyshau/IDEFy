@@ -1,0 +1,45 @@
+# Sub-mode Б: when the consumed line in Mode 2/3 exceeds 120, the colon goes on
+# its own line and each role group (I/C/M) on a separate line.
+# 10 + 10 + 10 = 30 arrows make the consumed line exceed 120 chars.
+
+activity A0 "x" {
+    I1 "in"
+    I2 "in"
+    I3 "in"
+    I4 "in"
+    I5 "in"
+    I6 "in"
+    I7 "in"
+    I8 "in"
+    I9 "in"
+    IA "in"
+    C1 "c"
+    C2 "c"
+    C3 "c"
+    C4 "c"
+    C5 "c"
+    C6 "c"
+    C7 "c"
+    C8 "c"
+    C9 "c"
+    CA "c"
+    M1 "m"
+    M2 "m"
+    M3 "m"
+    M4 "m"
+    M5 "m"
+    M6 "m"
+    M7 "m"
+    M8 "m"
+    M9 "m"
+    MA "m"
+
+    A1 "decomp"
+        :
+            I1, I2, I3, I4, I5, I6, I7, I8, I9, IA,
+            C1, C2, C3, C4, C5, C6, C7, C8, C9, CA,
+            M1, M2, M3, M4, M5, M6, M7, M8, M9, MA
+        ->
+            X11 "out1",
+            X12 "out2"
+}

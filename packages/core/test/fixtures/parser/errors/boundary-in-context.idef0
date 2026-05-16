@@ -1,0 +1,4 @@
+context A-0 "boundary arrows don't belong in context" {
+    T1 "ok"
+    I1 "stray boundary — error"
+}

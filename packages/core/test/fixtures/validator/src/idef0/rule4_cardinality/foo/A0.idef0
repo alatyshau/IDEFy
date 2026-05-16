@@ -1,0 +1,8 @@
+# Parent block A1 produces X11[O1] + X12 "extra" (2 outputs total).
+# Child A1 declares only one O-arrow → cardinality mismatch (rule 4).
+activity A0 "Root" {
+    I1 "in"
+    O1 "out"
+
+    A1 "child" : I1 -> X11[O1], X12 "extra internal"
+}

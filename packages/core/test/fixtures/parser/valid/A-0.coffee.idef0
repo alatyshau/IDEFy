@@ -1,0 +1,8 @@
+# src/idef0/coffee/brewing/A-0.idef0
+
+context A-0 "Контекст приготовления кофе" {
+    T1 "Шум в офисе"
+    T2 "Municipal Bylaw"
+
+    ...A0
+}

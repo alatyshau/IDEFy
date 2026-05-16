@@ -1,0 +1,4 @@
+# Second A0 in the same project — should be flagged as a duplicate by assembler.
+activity A0 "Duplicate root" {
+    I1 "in"
+}

@@ -1,0 +1,19 @@
+# Same block as canonical-mode1 but with intentionally weird (yet valid) whitespace:
+# - inconsistent indent (mix of 2/4/6/8 spaces)
+# - extra blank lines inside the declaration are not allowed (would terminate),
+#   so we only stretch whitespace WITHIN continuation lines (no empty lines inside
+#   the multi-line block).
+# - tabs and spaces mixed.
+# - comma followed by long whitespace run.
+# - `:` and `->` placed on the same line as the previous fragment.
+
+activity A0 "host" {
+  I1 "in"
+      C1 "ctrl"
+   M1 "mech"
+    O1 "out"
+
+    A1     "decomp"   :   I1,    C1,
+       M1   ->   X11[O1],
+            X12 "first internal",    X13 "second internal"
+}

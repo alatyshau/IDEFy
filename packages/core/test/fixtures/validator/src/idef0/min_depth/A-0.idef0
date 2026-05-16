@@ -1,0 +1,5 @@
+# A0 directly under src/idef0 → rule 14 fires (must be at least one folder deep).
+context A-0 "ctx" {
+    T1 "t"
+    ...A0
+}

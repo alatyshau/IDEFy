@@ -1,0 +1,18 @@
+# 12 blocks > 9 (soft limit) → rule 17 warning.
+activity A0 "many blocks" {
+    I1 "in"
+    O1 "out"
+
+    A1 "b1" : I1 -> X11[O1]
+    A2 "b2" : I1 -> X21[O1]
+    A3 "b3" : I1 -> X31[O1]
+    A4 "b4" : I1 -> X41[O1]
+    A5 "b5" : I1 -> X51[O1]
+    A6 "b6" : I1 -> X61[O1]
+    A7 "b7" : I1 -> X71[O1]
+    A8 "b8" : I1 -> X81[O1]
+    A9 "b9" : I1 -> X91[O1]
+    AA "bA" : I1 -> XA1[O1]
+    AB "bB" : I1 -> XB1[O1]
+    AC "bC" : I1 -> XC1[O1]
+}

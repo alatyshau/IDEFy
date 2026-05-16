@@ -1,0 +1,8 @@
+# Demonstrates parser panic-mode recovery: parser doesn't throw, accumulates
+# diagnostics, syncs to next start-of-declaration line or `}`.
+
+activity A0 "malformed block" {
+    I1 "in"
+    A1 "missing arrow target" : I1 X11
+    A2 "missing produced" : I1 ->
+}

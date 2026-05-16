@@ -1,0 +1,9 @@
+# Parent block A1 consumes I1 + C1 + M1; child A1 boundary is missing C1 → rule 4.
+activity A0 "Root" {
+    I1 "in"
+    O1 "out"
+    C1 "ctrl"
+    M1 "mech"
+
+    A1 "child" : I1, C1, M1 -> X11[O1]
+}

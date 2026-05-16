@@ -1,0 +1,11 @@
+# Reference layout — Mode 1 (everything on one line).
+# All other invariance fixtures must produce a semantically-identical AST.
+
+activity A0 "host" {
+    I1 "in"
+    C1 "ctrl"
+    M1 "mech"
+    O1 "out"
+
+    A1 "decomp" : I1, C1, M1 -> X11[O1], X12 "first internal", X13 "second internal"
+}
