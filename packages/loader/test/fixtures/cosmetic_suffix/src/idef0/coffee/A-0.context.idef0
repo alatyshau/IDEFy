@@ -1,0 +1,5 @@
+context A-0 "filename has cosmetic suffix (.context)" {
+    T1 "t"
+
+    ...A0
+}

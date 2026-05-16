@@ -1,0 +1,6 @@
+activity A1 "Level 1 — decomposes into A11" {
+    I1 "in"
+    O1 "out"
+
+    A11 "sub-phase" : I1 -> X111[O1]
+}

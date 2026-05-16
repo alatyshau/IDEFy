@@ -1,0 +1,6 @@
+activity A11 "Level 2 — decomposes into A111" {
+    I1 "in"
+    O1 "out"
+
+    A111 "atomic sub-task" : I1 -> X1111[O1]
+}

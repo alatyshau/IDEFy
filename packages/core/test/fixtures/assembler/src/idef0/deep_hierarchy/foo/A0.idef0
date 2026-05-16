@@ -1,0 +1,6 @@
+activity A0 "Root (level 0)" {
+    I1 "in"
+    O1 "out"
+
+    A1 "phase one" : I1 -> X11[O1]
+}

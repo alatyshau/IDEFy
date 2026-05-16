@@ -1,0 +1,4 @@
+# No A0 marker → no project; A-0 becomes orphan.
+context A-0 "no project here" {
+    T1 "t"
+}

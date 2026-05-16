@@ -49,6 +49,51 @@ describe("assembleProject: fixture hr/recruitment with one child decomposition",
     });
 });
 
+describe("assembleProject: deep hierarchy (4 decomposition levels)", () => {
+    it("wires parent ↔ child chain A0 → A1 → A11 → A111 across 4 files", () => {
+        const { project } = loadFixtureProject(
+            "assembler",
+            "deep_hierarchy/foo"
+        );
+        expect(project.name).toBe("deep_hierarchy.foo");
+        expect(project.activities.size).toBe(4);
+
+        const a0 = project.activities.get("A0")!;
+        const a1 = project.activities.get("A1")!;
+        const a11 = project.activities.get("A11")!;
+        const a111 = project.activities.get("A111")!;
+
+        expect(a0.parent).toBeNull();
+        expect(a1.parent?.id).toBe("A0");
+        expect(a11.parent?.id).toBe("A1");
+        expect(a111.parent?.id).toBe("A11");
+
+        // Verify the chain reaches A0 from the deepest activity.
+        expect(a111.parent?.parent?.parent?.id).toBe("A0");
+    });
+
+    it("each activity exposes its blockInParent at each level", () => {
+        const { project } = loadFixtureProject(
+            "assembler",
+            "deep_hierarchy/foo"
+        );
+        expect(project.activities.get("A1")!.blockInParent?.id).toBe("A1");
+        expect(project.activities.get("A11")!.blockInParent?.id).toBe("A11");
+        expect(project.activities.get("A111")!.blockInParent?.id).toBe("A111");
+    });
+
+    it("children Maps are populated all the way down", () => {
+        const { project } = loadFixtureProject(
+            "assembler",
+            "deep_hierarchy/foo"
+        );
+        expect(project.activities.get("A0")!.children.has("A1")).toBe(true);
+        expect(project.activities.get("A1")!.children.has("A11")).toBe(true);
+        expect(project.activities.get("A11")!.children.has("A111")).toBe(true);
+        expect(project.activities.get("A111")!.children.size).toBe(0);
+    });
+});
+
 describe("assembleProject: structural error fixtures", () => {
     it("duplicate_id project — assembler reports the duplicate", () => {
         const { assemblerErrors } = loadFixtureProject(

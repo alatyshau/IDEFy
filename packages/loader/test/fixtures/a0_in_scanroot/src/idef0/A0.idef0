@@ -1,0 +1,5 @@
+# A0 directly under scanRoot — loader yields ProjectDescriptor with
+# projectRoot === scanRoot. Core's validator flags this (rule 14 surface).
+activity A0 "Root with no enclosing folder" {
+    I1 "in"
+}

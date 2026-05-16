@@ -1,0 +1,9 @@
+# Same project as deep_nesting/, but files are arranged in subfolders by
+# decomposition hierarchy. Per spec/03-layout.md the loader MUST treat these
+# two layouts identically — sub-folders are ignored for project grouping.
+
+context A-0 "Контекст бизнес-процесса" {
+    T1 "Регламент компании"
+
+    ...A0
+}

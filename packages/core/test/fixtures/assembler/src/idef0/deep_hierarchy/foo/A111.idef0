@@ -1,0 +1,4 @@
+activity A111 "Level 3 — atomic, no decomposition file deeper than this" {
+    I1 "in"
+    O1 "out"
+}

@@ -75,13 +75,18 @@ Project assembler **не парсит** — он работает над уже 
 ```
 validate(project: IdefProject): Diagnostic[]
 validateOrphans(orphanFilePaths: string[]): Diagnostic[]
+diagnosticsForNestedProjects(markers: NestedProjectMarker[]): Diagnostic[]
+
+NestedProjectMarker = same shape as @idefy/loader's NestedProjectMarker.
 ```
 
-`validate(project)` применяет правила из [`spec/04-validator.md`](../../../spec/04-validator.md), **не помеченные `[TODO]`** и **проверяемые в границах одного проекта**: правила **4, 7–14, 17, 18**. Правила 1–3 (ICOM-согласованность) и 5–6 (туннели) — `[TODO]`, не реализуются. Правило **15** (запрет вложенных проектов) реализуется на стороне [`@idefy/loader`](../../loader/spec/COMPONENT.md), потому что требует FS-обзора и группировки файлов в проекты — недоступно из `IdefProject` в изоляции (loader при сканировании видит, что внутри одного проекта лежит маркер второго `A0.*.idef0` и репортит это как структурную ошибку).
+`validate(project)` применяет правила из [`spec/04-validator.md`](../../../spec/04-validator.md), **не помеченные `[TODO]`** и **проверяемые в границах одного проекта**: правила **4, 7–14, 17, 18**. Правила 1–3 (ICOM-согласованность) и 5–6 (туннели) — `[TODO]`, не реализуются.
 
 `validateOrphans(orphanFilePaths)` реализует правило 16 («Принадлежность файла проекту»): для каждого пути из списка генерирует Diagnostic с `severity: 'error'`, `ruleId: 'validator.rule-16'`, `file: <path>`, range — на первой строке, сообщение «`.idef0` file under `src/idef0/` but outside any project root». Список orphan-файлов поставляет caller (`@idefy/vscode` через [`@idefy/loader`](../../loader/spec/COMPONENT.md) → `discoverProjects().orphans`).
 
-Разделение на две функции — потому что `validate` требует `IdefProject` (per-project scope), а правило 16 описывает файлы, **не принадлежащие** никакому проекту (per-scanRoot scope).
+`diagnosticsForNestedProjects(markers)` реализует **семантическую половину** правила 15 («Запрет вложенных проектов»). Структурную половину делает [`@idefy/loader`](../../loader/spec/COMPONENT.md): сканируя FS, он возвращает `NestedProjectMarker[]` — пары проектов, где один лежит внутри другого. Эта функция оборачивает каждый marker в `Diagnostic` с `severity: 'error'`, `ruleId: 'validator.rule-15'`, `file: <innerMarkerPath>`, сообщение «Nested project: `A0.*.idef0` at `<innerProjectRoot>` lies inside project rooted at `<outerProjectRoot>`». Разделение позволяет loader'у оставаться без semantic-зависимости от core, а core — без FS-зависимости.
+
+Разделение на три функции — потому что `validate` требует `IdefProject` (per-project scope), правило 16 описывает файлы вне проектов (per-scanRoot scope), а правило 15 требует cross-project FS-видения, доступного только loader'у.
 
 ### Форматтер
 
@@ -124,7 +129,7 @@ FormatOptions {
 
 ### Валидатор
 
-- `validate(project)` применяет правила без `[TODO]` маркеров **и** с per-project scope (сейчас 4, 7–14, 17, 18). Правило 16 — отдельная функция `validateOrphans` (см. Public API). Правило 15 делегировано в `@idefy/loader`.
+- `validate(project)` применяет правила без `[TODO]` маркеров **и** с per-project scope (сейчас 4, 7–14, 17, 18). Правило 16 — отдельная функция `validateOrphans`. Правило 15 — `diagnosticsForNestedProjects(markers)` поверх данных от `@idefy/loader`.
 - Каждая диагностика содержит ссылку на правило (поле `ruleId`), source range и severity (`error` / `warning`).
 - Live-friendly: работает на incomplete project'е (например, с одним невалидным файлом из десятка) без exceptions.
 

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { isActivityId } from "../src/ids.js";
-import { validate, validateOrphans } from "../src/validator/validate.js";
+import {
+    diagnosticsForNestedProjects,
+    validate,
+    validateOrphans,
+} from "../src/validator/validate.js";
 import { loadFixtureProject } from "./fixtures.js";
 
 describe("isActivityId: regex enforces suffix alphabet [1-9A-Z]", () => {
@@ -174,6 +178,30 @@ describe("validator: rule 4 — interface consistency between parent and child",
         expect(
             rule4.some((d) => /produces 2 output arrow/.test(d.message))
         ).toBe(true);
+    });
+});
+
+describe("diagnosticsForNestedProjects: rule 15 (semantic half)", () => {
+    it("wraps each NestedProjectMarker as a rule-15 Diagnostic", () => {
+        const diags = diagnosticsForNestedProjects([
+            {
+                outerProjectRoot: "/ws/src/idef0/outer",
+                innerProjectRoot: "/ws/src/idef0/outer/sub",
+                innerMarkerPath: "/ws/src/idef0/outer/sub/A0.idef0",
+            },
+        ]);
+        expect(diags).toHaveLength(1);
+        const d = diags[0]!;
+        expect(d.severity).toBe("error");
+        expect(d.source).toBe("validator");
+        expect(d.ruleId).toBe("validator.rule-15");
+        expect(d.file).toBe("/ws/src/idef0/outer/sub/A0.idef0");
+        expect(d.message).toContain("/ws/src/idef0/outer/sub");
+        expect(d.message).toContain("/ws/src/idef0/outer");
+    });
+
+    it("empty input → empty output", () => {
+        expect(diagnosticsForNestedProjects([])).toEqual([]);
     });
 });
 

@@ -1,0 +1,3 @@
+activity A1 "lone — but not an A0 marker, so this file is orphan" {
+    I1 "in"
+}

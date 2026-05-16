@@ -4,6 +4,7 @@ import type {
     ActivityNode,
     Diagnostic,
     IdefProject,
+    NestedProjectMarker,
     ProjectFile,
     SourceRange,
 } from "../types.js";
@@ -41,6 +42,23 @@ export function validateOrphans(
         file: path,
         message:
             "`.idef0` file under `src/idef0/` but outside any project root",
+    }));
+}
+
+// Rule 15 — semantic half. Structural half lives in @idefy/loader, which
+// emits NestedProjectMarker[] from FS discovery. This function wraps each
+// marker into a Diagnostic — keeps loader free of diagnostic semantics and
+// core free of FS dependency.
+export function diagnosticsForNestedProjects(
+    markers: readonly NestedProjectMarker[]
+): Diagnostic[] {
+    return markers.map((m) => ({
+        severity: "error" as const,
+        source: "validator" as const,
+        ruleId: "validator.rule-15",
+        range: ZERO_RANGE,
+        file: m.innerMarkerPath,
+        message: `Nested project: A0.*.idef0 at '${m.innerProjectRoot}' lies inside project rooted at '${m.outerProjectRoot}'`,
     }));
 }
 

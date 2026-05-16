@@ -1,0 +1,5 @@
+# Nested A0 inside the outer project — loader emits a second ProjectDescriptor;
+# core's validator will flag this (rule 15 surface).
+activity A0 "Nested root — invalid" {
+    I1 "in"
+}

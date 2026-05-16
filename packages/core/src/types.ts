@@ -251,6 +251,23 @@ export interface RendererRegistry {
     listAvailable(): readonly RendererId[];
 }
 
+// ─── Nested project markers (rule 15 surface) ────────────────────────────────
+//
+// Loader discovers nested A0.*.idef0 markers (one project's marker living
+// inside another project's tree) and surfaces them as structural data without
+// classifying them as Diagnostics. Core wraps the markers into rule-15
+// diagnostics via `diagnosticsForNestedProjects(markers)`.
+//
+// The shape mirrors `@idefy/loader.NestedProjectMarker` so callers can pass
+// the loader's output directly. This keeps the cross-package contract by
+// structure rather than by import dependency.
+
+export interface NestedProjectMarker {
+    readonly outerProjectRoot: string;
+    readonly innerProjectRoot: string;
+    readonly innerMarkerPath: string;
+}
+
 // ─── Invariant violations ────────────────────────────────────────────────────
 
 export class InvariantViolation extends Error {
