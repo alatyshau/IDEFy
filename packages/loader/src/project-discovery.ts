@@ -27,7 +27,13 @@ function isIdef0Filename(name: string): boolean {
 
 // Per packages/loader/spec/COMPONENT.md Errors section: missing path → empty
 // result (no propagation); permission/catastrophic → propagate as Error.
-function isNotFoundError(err: unknown): boolean {
+//
+// Adapter owns the not-found taxonomy: each FS bridge knows what
+// "doesn't exist" looks like in its world (Node `ENOENT`, VS Code
+// `FileNotFound`, etc). Loader prefers `fs.isNotFound(err)` when provided;
+// otherwise falls back to the Node-style heuristic for backwards compat.
+function isNotFoundError(err: unknown, fs: FsAdapter): boolean {
+    if (typeof fs.isNotFound === "function") return fs.isNotFound(err);
     return (
         !!err &&
         typeof err === "object" &&
@@ -59,7 +65,7 @@ async function walkIdef0(
     } catch (err: unknown) {
         // Missing directory → empty result. Permission/catastrophic →
         // propagate per spec, so the UI layer can surface it.
-        if (isNotFoundError(err)) return;
+        if (isNotFoundError(err, fs)) return;
         throw err;
     }
     for (const e of entries) {

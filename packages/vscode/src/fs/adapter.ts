@@ -1,10 +1,15 @@
 // FsAdapter implementation backed by vscode.workspace.fs.
 //
-// The loader contract (packages/loader/spec/COMPONENT.md §FS adapter) treats
-// paths as opaque POSIX-form strings. VS Code Uris use forward-slash paths in
-// `uri.path` on every platform, so we round-trip via `vscode.Uri.file(p)` and
-// expose the URI path back to the loader. Windows backslash normalization is
-// handled by VS Code itself at the URI boundary.
+// **URI identity preservation.** Adapter использует **полную URI-строку** как
+// opaque path-identifier (`uri.toString()`), не `uri.path`. Это сохраняет
+// `scheme` и `authority` через round-trip — критично для не-`file://`
+// workspaces (Remote-SSH, WSL, Codespaces, Dev Containers, custom virtual
+// FS). Loader's path utilities (`@idefy/loader/paths`) URI-aware и
+// прозрачно обрабатывают `<scheme>://<authority>` префикс.
+//
+// Старая реализация делала `Uri.file(uri.path)` и теряла `scheme/authority`
+// на каждом round-trip, превращая `vscode-remote://wsl/foo` в `file:///foo`
+// и роняя remote-сценарии.
 //
 // This module is the **only** place in the package that imports vscode.workspace.fs.
 // Invariant from COMPONENT.md §Invariants: «FS-операции никогда не идут мимо
@@ -52,15 +57,28 @@ export function createVsCodeFsAdapter(): FsAdapter {
                 throw err;
             }
         },
+        isNotFound: isFileNotFound,
     };
 }
 
-export function pathToUri(posixPath: string): vscode.Uri {
-    return vscode.Uri.file(posixPath);
+// Convert an opaque loader path-identifier back into a vscode.Uri without
+// losing scheme/authority. The identifier produced by `uriToPath()` is a
+// full URI string (e.g. `vscode-remote://wsl/home/foo/A0.idef0`), so
+// `Uri.parse` round-trips it exactly. For paths that came from somewhere
+// else (e.g. a plain `/Users/...` string from a Node-FS adapter context),
+// `Uri.parse` recognizes the lack of scheme and falls back to a relative
+// URI — caller's responsibility not to mix path-spaces between adapters.
+export function pathToUri(opaquePath: string): vscode.Uri {
+    // `Uri.parse` requires at least a scheme to behave well; if the string
+    // doesn't have one, fall back to `Uri.file` (legacy local-only path).
+    if (/^[a-z][a-z0-9+.\-]*:\/\//i.test(opaquePath)) {
+        return vscode.Uri.parse(opaquePath);
+    }
+    return vscode.Uri.file(opaquePath);
 }
 
 export function uriToPath(uri: vscode.Uri): string {
-    return uri.path;
+    return uri.toString();
 }
 
 // Binary write helper. The FsAdapter contract from `@idefy/loader` is text-only

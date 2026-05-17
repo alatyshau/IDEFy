@@ -16,6 +16,15 @@ export interface FsAdapter {
     renameFile(from: string, to: string): Promise<void>;
     listDirectory(path: string): Promise<readonly DirectoryEntry[]>;
     exists(path: string): Promise<boolean>;
+    /**
+     * Adapter-owned check for "path does not exist" — every FS adapter throws
+     * not-found in its own dialect (Node `ENOENT`, VS Code `FileNotFound`,
+     * remote FS proxies with custom codes). Loader consults this method to
+     * decide whether to translate the error to a no-op (`null`/empty result)
+     * or propagate. If not provided, loader falls back to its built-in
+     * Node-style ENOENT heuristic.
+     */
+    isNotFound?(err: unknown): boolean;
 }
 
 export interface ProjectDescriptor {

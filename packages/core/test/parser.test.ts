@@ -47,12 +47,19 @@ describe("parser: valid fixtures parse without errors", () => {
         expect(errors).toEqual([]);
         if (ast?.kind !== "activity") throw new Error("expected activity");
         const byId = new Map(ast.blocks.map((b) => [b.id, b]));
+        // A1 has "above-A1 sticks" — adjacent comment, no blank below ⇒ true sticky.
         expect(byId.get("A1")?.commentsAbove.map((c) => c.text)).toEqual([
             "above-A1 sticks (no blank between)",
         ]);
-        expect(byId.get("A2")?.commentsBelow.map((c) => c.text)).toEqual([
-            "below-A2 sticks (no blank between)",
-        ]);
+        // "below-A2 sticks" in the fixture sits between A2 and a blank line.
+        // Per the updated divider rule (blank-line-below ⇒ divider), this
+        // comment is a block divider, NOT A2.commentsBelow.
+        expect(byId.get("A2")?.commentsBelow).toEqual([]);
+        expect(
+            ast.blocksDividers?.some(
+                (d) => d.comment.text === "below-A2 sticks (no blank between)",
+            ),
+        ).toBe(true);
     });
 
     it("ignores trailer after closing brace per spec 01-dsl.md", () => {
@@ -111,6 +118,362 @@ describe("parser: error fixtures emit container-mismatch diagnostics", () => {
                 )
             )
         ).toBe(true);
+    });
+});
+
+describe("parser: sticky comments on boundary arrows", () => {
+    // REGRESSION: комменты внутри boundary section ранее уходили в
+    // floatingComments и затем дропались форматтером. По spec/02-formatting.md
+    // правило прилипания применяется к КАЖДОМУ anchor-узлу — это включает и
+    // boundary arrows, не только functional blocks и tunnels. Без этого
+    // комменты, описывающие отдельные стрелки границы, теряются при первом
+    // же форматировании файла.
+
+    it("comment immediately above a boundary arrow becomes its commentsAbove", () => {
+        const text = `activity A0 "root" {
+    I1 "in"
+    # describes O1
+    O1 "out"
+
+    A1 "child" : I1 -> X11[O1]
+}
+`;
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "activity") throw new Error("activity");
+        const o1 = ast.boundary.find(
+            (b) => b.kind === "flat" && b.id === "O1",
+        );
+        if (!o1 || o1.kind !== "flat") throw new Error("O1 missing");
+        expect(o1.commentsAbove.map((c) => c.text)).toEqual(["describes O1"]);
+    });
+
+    it("comment immediately below an arrow but with blank line below becomes a divider, not commentsBelow", () => {
+        // Per the updated rule: a comment with a blank line BELOW it is a
+        // block divider. The blank-above (or lack thereof) doesn't matter —
+        // formatter will inject one. So `O1 "out" / # note / blank / A1`
+        // pushes `# note` to boundaryDividers, not to O1.commentsBelow.
+        const text = `activity A0 "root" {
+    I1 "in"
+    O1 "out"
+    # trailing note on O1
+
+    A1 "child" : I1 -> X11[O1]
+}
+`;
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "activity") throw new Error("activity");
+        const o1 = ast.boundary.find(
+            (b) => b.kind === "flat" && b.id === "O1",
+        );
+        if (!o1 || o1.kind !== "flat") throw new Error("O1 missing");
+        expect(o1.commentsBelow).toEqual([]);
+        expect(ast.boundaryDividers).toHaveLength(1);
+        expect(ast.boundaryDividers![0]!.comment.text).toBe(
+            "trailing note on O1",
+        );
+    });
+
+    it("inline comment after boundary arrow goes to `inlineComment` (not `commentsBelow`)", () => {
+        // Inline comments live on the SAME source line as the arrow's last
+        // token. They are kept separately from the standalone-line
+        // commentsBelow so that the formatter can preserve the inline shape:
+        //   `M2 "label" # inline note`
+        // rather than re-emitting the comment on a fresh line below.
+        const text = `activity A0 "root" {
+    I1 "in"
+    M2 "mech" # inline note on M2
+    O1 "out"
+
+    A1 "child" : I1, M2 -> X11[O1]
+}
+`;
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "activity") throw new Error("activity");
+        const m2 = ast.boundary.find(
+            (b) => b.kind === "flat" && b.id === "M2",
+        );
+        if (!m2 || m2.kind !== "flat") throw new Error("M2 missing");
+        expect(m2.inlineComment?.text).toBe("inline note on M2");
+        // Сохраняем инвариант: inline comment не дублируется в commentsBelow.
+        expect(m2.commentsBelow).toEqual([]);
+    });
+
+    it("inline comment does NOT bleed into next anchor's commentsAbove", () => {
+        // Bug: `M2 "..." # comment` in raw pizzeria fixture caused the inline
+        // comment to be misattributed as the NEXT anchor's commentsAbove
+        // (i.e., it visually jumped down past the next arrow). Sticky logic
+        // only checked "items between anchors" and assigned them to the
+        // following anchor without considering same-line proximity.
+        const text = `activity A0 "root" {
+    I1 "in"
+    M2 "mech" # inline note on M2
+    I2 "second in"
+    O1 "out"
+
+    A1 "child" : I1, I2, M2 -> X11[O1]
+}
+`;
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "activity") throw new Error("activity");
+        const m2 = ast.boundary.find(
+            (b) => b.kind === "flat" && b.id === "M2",
+        );
+        const i2 = ast.boundary.find(
+            (b) => b.kind === "flat" && b.id === "I2",
+        );
+        if (!m2 || m2.kind !== "flat") throw new Error("M2 missing");
+        if (!i2 || i2.kind !== "flat") throw new Error("I2 missing");
+        expect(m2.inlineComment?.text).toBe("inline note on M2");
+        expect(i2.commentsAbove).toEqual([]);
+    });
+
+    it("inline comment after a functional block's produced list goes to its inlineComment", () => {
+        // Same shape for blocks: `A2 ... -> X21# inline` — inline `#` after
+        // the block's last token attaches as inlineComment, not as
+        // commentsBelow / next anchor's commentsAbove.
+        const text = `activity A0 "root" {
+    I1 "in"
+    O1 "out"
+    O2 "out2"
+
+    A1 "first"  : I1 -> X11 "inner" # inline on A1
+    A2 "second" : I1 -> X21[O1]
+}
+`;
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "activity") throw new Error("activity");
+        const a1 = ast.blocks.find((b) => b.id === "A1");
+        const a2 = ast.blocks.find((b) => b.id === "A2");
+        if (!a1 || !a2) throw new Error("blocks missing");
+        expect(a1.inlineComment?.text).toBe("inline on A1");
+        expect(a1.commentsBelow).toEqual([]);
+        expect(a2.commentsAbove).toEqual([]);
+    });
+
+    it("blank line above a sticky comment is captured as leadingBlankLine on that comment", () => {
+        // User-visible spec: «Если перед или после полнострочного комментария
+        // есть пустая строка, эти строки надо сохранять, но не больше одной».
+        // Comments preserve their up-to-one-blank-line padding in the format
+        // output. The flag lives on the Comment node itself so the formatter
+        // can emit the blank without needing to re-derive layout from line
+        // numbers (which are unreliable after sorting).
+        const text = `activity A0 "root" {
+    I1 "in"
+
+    # blank above
+    O1 "out"
+
+    A1 "child" : I1 -> X11[O1]
+}
+`;
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "activity") throw new Error("activity");
+        const o1 = ast.boundary.find(
+            (b) => b.kind === "flat" && b.id === "O1",
+        );
+        if (!o1 || o1.kind !== "flat") throw new Error("O1 missing");
+        expect(o1.commentsAbove).toHaveLength(1);
+        expect(o1.commentsAbove[0]!.leadingBlankLine).toBe(true);
+    });
+
+    it("comment adjacent to anchor (no blank line above) has leadingBlankLine=false", () => {
+        const text = `activity A0 "root" {
+    I1 "in"
+    # no-blank above
+    O1 "out"
+
+    A1 "child" : I1 -> X11[O1]
+}
+`;
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "activity") throw new Error("activity");
+        const o1 = ast.boundary.find(
+            (b) => b.kind === "flat" && b.id === "O1",
+        );
+        if (!o1 || o1.kind !== "flat") throw new Error("O1 missing");
+        expect(o1.commentsAbove[0]!.leadingBlankLine).toBe(false);
+    });
+
+    it("blank line below the last comment of an anchor's commentsBelow is captured as leadingBlankLine on the FOLLOWING anchor's commentsAbove", () => {
+        // The "blank after the comment" symmetrically equals "blank before
+        // the next sticky-relevant thing". We capture it as a flag on the
+        // next comment / anchor — single source of truth.
+        const text = `activity A0 "root" {
+    I1 "in"
+    # below I1
+
+    O1 "out"
+
+    A1 "child" : I1 -> X11[O1]
+}
+`;
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "activity") throw new Error("activity");
+        const o1 = ast.boundary.find(
+            (b) => b.kind === "flat" && b.id === "O1",
+        );
+        if (!o1 || o1.kind !== "flat") throw new Error("O1 missing");
+        // Comment "# below I1" hangs as commentsBelow of I1 (no blank between
+        // I1 and comment). Blank between that comment and O1 ⇒ O1 starts a
+        // new group with leadingBlankLine=true (anchor-level metadata).
+        expect(o1.leadingBlankLine).toBe(true);
+    });
+
+    it("comments separated from arrows by blank line above AND below land in boundaryDividers", () => {
+        // After the block-divider rework, a comment isolated from anchors by
+        // blank lines on both sides is a "block divider" — it splits the
+        // section into user-blocks. It lives in `boundaryDividers`, NOT in
+        // `commentsAbove`/`commentsBelow` of any anchor, and NOT in
+        // `floatingComments`.
+        const text = `activity A0 "root" {
+    I1 "in"
+
+    # detached from I1 (blank line above)
+
+    O1 "out"
+
+    A1 "child" : I1 -> X11[O1]
+}
+`;
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "activity") throw new Error("activity");
+        const i1 = ast.boundary.find(
+            (b) => b.kind === "flat" && b.id === "I1",
+        );
+        const o1 = ast.boundary.find(
+            (b) => b.kind === "flat" && b.id === "O1",
+        );
+        if (!i1 || i1.kind !== "flat" || !o1 || o1.kind !== "flat") {
+            throw new Error("arrows missing");
+        }
+        expect(i1.commentsBelow).toEqual([]);
+        expect(o1.commentsAbove).toEqual([]);
+        expect(ast.boundaryDividers).toHaveLength(1);
+        expect(ast.boundaryDividers![0]!.comment.text).toBe(
+            "detached from I1 (blank line above)",
+        );
+    });
+});
+
+describe("parser: block-divider comments", () => {
+    // A block divider is a full-line comment with a blank line after it.
+    // Per spec, dividers split the section (boundary or decomposition) into
+    // user-blocks. Formatter sorts globally and chooses a partition that
+    // minimizes total redistribution distance.
+
+    it("identifies a boundary divider as `boundaryDividers` with afterIndex", () => {
+        const text = `activity A0 "x" {
+    I1 "in"
+    O1 "out"
+
+    # divider
+
+    M2 "mech"
+    I2 "in2"
+
+    A1 "child" : I1, I2, M2 -> X11[O1]
+}
+`;
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "activity") throw new Error("activity");
+        expect(ast.boundaryDividers).toHaveLength(1);
+        // Divider sits after the 2nd entry of input-order boundary (I1, O1).
+        expect(ast.boundaryDividers![0]!.afterIndex).toBe(1);
+        expect(ast.boundaryDividers![0]!.comment.text).toBe("divider");
+    });
+
+    it("comment with blank line BELOW (but NOT above) is still a divider", () => {
+        // User-visible rule: divider = comment with trailing blank line.
+        // Leading blank is irrelevant — if it's missing in the source, the
+        // formatter adds one. Parser-side just records the comment as a
+        // divider; formatter handles the blank-above injection.
+        const text = `activity A0 "x" {
+    I1 "in"
+    # divider
+
+    M1 "mech"
+    O1 "out"
+
+    A1 "child" : I1, M1 -> X11[O1]
+}
+`;
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "activity") throw new Error("activity");
+        expect(ast.boundaryDividers).toHaveLength(1);
+        expect(ast.boundaryDividers![0]!.comment.text).toBe("divider");
+        // Importantly: I1 must NOT have the comment as commentsBelow.
+        const i1 = ast.boundary.find(
+            (b) => b.kind === "flat" && b.id === "I1",
+        );
+        if (!i1 || i1.kind !== "flat") throw new Error("I1 missing");
+        expect(i1.commentsBelow).toEqual([]);
+    });
+
+    it("identifies a blocks divider", () => {
+        const text = `activity A0 "x" {
+    I1 "in"
+    O1 "out"
+
+    A2 "second" : I1 -> X21[O1]
+
+    # divides
+
+    A1 "first" : I1 -> X11[O1]
+}
+`;
+        const { ast, errors } = parseText(text, {
+            filePath: "synthetic",
+            basename: "A0.idef0",
+        });
+        expect(errors).toEqual([]);
+        if (!ast || ast.kind !== "activity") throw new Error("activity");
+        expect(ast.blocksDividers).toHaveLength(1);
+        expect(ast.blocksDividers![0]!.afterIndex).toBe(0); // after A2 (input order)
+        expect(ast.blocksDividers![0]!.comment.text).toBe("divides");
     });
 });
 
@@ -277,13 +640,15 @@ A-0
         // endLine браться из stream.position после lookahead — две соседние
         // декларации, разделённые пустой строкой, сольются в одну группу
         // sticky-comments, и комментарии между ними прилипнут к следующему
-        // блоку. Должно быть наоборот: комментарии остаются floating и
-        // выбрасываются форматтером per spec/02-formatting.md.
+        // блоку. Правильное поведение: коммент после T1 (без blank-line
+        // gap) — sticky к T1 как commentsBelow; коммент перед A1 — отдельная
+        // группа (blank line gap) и в commentsAbove первого блока его быть
+        // не должно.
         const text = `activity A0 "root" {
     I1 "in"
     O1 "out"
     T1 "t"
-    # stray comment in boundary section
+    # belongs to T1 (no blank line)
 
     A1 "child" : I1, C[T1] -> X11[O1]
 }
@@ -295,17 +660,22 @@ A-0
         });
         expect(errors).toEqual([]);
         if (!ast || ast.kind !== "activity") throw new Error("expected activity");
-        // Stray comment в boundary section без блока — должен быть floating,
-        // не commentsAbove первого блока.
+        // Коммент через blank-line gap не должен прилипнуть к A1.
         expect(ast.blocks).toHaveLength(1);
         expect(ast.blocks[0]!.commentsAbove).toHaveLength(0);
-        expect(
-            ast.floatingComments.some(
-                (c) =>
-                    c.text === "stray comment in boundary section" &&
-                    c.location.range.start.line > ast.location.range.start.line,
-            ),
-        ).toBe(true);
+        // По обновлённому правилу divider'а: коммент с blank line СНИЗУ — это
+        // block-divider, не sticky-below. Уходит в boundaryDividers, не в
+        // T1.commentsBelow. (Тест ловит то самое regression из прошлой
+        // итерации: parser больше не путает endLine T1 с строкой A1.)
+        const t1 = ast.boundary.find(
+            (b) => b.kind === "tunnel" && b.id === "T1",
+        );
+        if (!t1 || t1.kind !== "tunnel") throw new Error("T1 missing");
+        expect(t1.commentsBelow).toEqual([]);
+        expect(ast.boundaryDividers).toHaveLength(1);
+        expect(ast.boundaryDividers![0]!.comment.text).toBe(
+            "belongs to T1 (no blank line)",
+        );
     });
 });
 

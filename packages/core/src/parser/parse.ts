@@ -2,6 +2,7 @@ import type {
     ActivityAST,
     ActivityId,
     ArrowId,
+    BlockDivider,
     BoundaryArrow,
     Comment,
     ConsumedArrowRef,
@@ -57,7 +58,17 @@ const PRODUCED_BRACKET_ROLES: ReadonlySet<ArrowRole> = new Set(["O", "T", "X"]);
 // Source-text reconstruction of a BoundaryArrow id for diagnostic messages.
 // (BoundaryArrow is a discriminated union — different variants carry different
 // id fields, see types.ts.)
-function boundaryArrowDisplay(arrow: BoundaryArrow): string {
+// Distributive Omit (defined again here so the helper is available before
+// the rawItem types below — TypeScript hoists type aliases but the reader
+// shouldn't need to scroll for the definition).
+type DistOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never;
+
+type BoundaryArrowForDisplay = DistOmit<
+    BoundaryArrow,
+    "leadingBlankLine" | "commentsAbove" | "commentsBelow"
+>;
+
+function boundaryArrowDisplay(arrow: BoundaryArrowForDisplay): string {
     switch (arrow.kind) {
         case "flat":
             return arrow.id;
@@ -79,9 +90,11 @@ interface RawComment {
     readonly startLine: number;
     readonly endLine: number;
 }
+type BoundaryArrowRaw = BoundaryArrowForDisplay;
+
 interface RawBoundary {
     readonly kind: "boundary";
-    readonly arrow: BoundaryArrow;
+    readonly arrow: BoundaryArrowRaw;
     readonly startLine: number;
     readonly endLine: number;
 }
@@ -278,10 +291,13 @@ function parseActivity(
     // We don't consume further content.
 
     const floating: Comment[] = [...preHeaderFloating];
-    const { blocks, boundary, floatingFromBody } = classifyActivityItems(
-        items,
-        errors
-    );
+    const {
+        blocks,
+        boundary,
+        boundaryDividers,
+        blocksDividers,
+        floatingFromBody,
+    } = classifyActivityItems(items, errors);
     floating.push(...floatingFromBody);
 
     const location: SourceLocation = {
@@ -294,6 +310,8 @@ function parseActivity(
         name: nameLit,
         boundary,
         blocks,
+        ...(boundaryDividers.length > 0 ? { boundaryDividers } : {}),
+        ...(blocksDividers.length > 0 ? { blocksDividers } : {}),
         floatingComments: floating,
         location,
         ...(filenameId !== undefined ? { filenameId } : {}),
@@ -345,10 +363,12 @@ function parseContext(
     const closingPos = consumeClosingBrace(stream, errors);
 
     const floating: Comment[] = [...preHeaderFloating];
-    const { tunnels, rootRef, floatingFromBody } = classifyContextItems(
-        items,
-        errors
-    );
+    const {
+        tunnels,
+        tunnelsDividers,
+        rootRef,
+        floatingFromBody,
+    } = classifyContextItems(items, errors);
     floating.push(...floatingFromBody);
 
     const location: SourceLocation = {
@@ -360,6 +380,7 @@ function parseContext(
         id: "A-0",
         name: nameLit,
         tunnels,
+        ...(tunnelsDividers.length > 0 ? { tunnelsDividers } : {}),
         rootRef,
         floatingComments: floating,
         location,
@@ -711,6 +732,12 @@ function parseFunctionalBlockRest(
     }
 
     consumeWhitespaceMultilineForDecl(stream);
+    // Last source line known to belong to this block's syntactic body. Updated
+    // after each successful produced ref / consumed-list comma; used as
+    // `endLine` so that trailing whitespace/comment lookahead doesn't make the
+    // block look longer than it actually is (breaks inline-comment sticky
+    // logic in classifyActivityItems).
+    let lastMeaningfulLine = stream.position.line;
     const produced: ProducedArrowRef[] = [];
     // Pre-check: distinguish "no produced at all" from "produced list begins
     // with something we can attempt to parse". `}` / EOF / `#` (mid-decl
@@ -737,6 +764,13 @@ function parseFunctionalBlockRest(
                 syncToEol(stream);
                 return null;
             }
+            // Снимок позиции СРАЗУ после parseProducedRef — это реальная
+            // граница последнего значимого токена блока. Следующий
+            // consumeWhitespaceMultilineForDecl может продвинуть
+            // stream.position.line вперёд (например, на строку
+            // комментария-терминатора), и если бы endLine брали оттуда —
+            // inline-комментарий ниже потерял бы привязку к этому блоку.
+            lastMeaningfulLine = stream.position.line;
             consumeWhitespaceMultilineForDecl(stream);
             if (isAtEndOfDecl(stream, container)) break;
             if (!consumeChar(stream, ",")) {
@@ -748,9 +782,11 @@ function parseFunctionalBlockRest(
                 syncToEol(stream);
                 return null;
             }
+            // `,` тоже двигает позицию — обновляем границу.
+            lastMeaningfulLine = stream.position.line;
         }
     }
-    const endLine = stream.position.line;
+    const endLine = lastMeaningfulLine;
     return {
         kind: "block",
         block: {
@@ -931,24 +967,18 @@ function parseProducedRef(
         } catch {
             return null;
         }
-        // Optional plug label: bracket-form may be followed by `"label"`.
-        // The label terminates with the next produced separator (`,`), end of
-        // declaration, or `}`. Parsing is non-greedy — we peek for `"` only.
-        // Per spec/04-validator.md rule 21, label is required at join and
-        // forbidden otherwise; validator enforces the structural constraint.
+        // Optional plug label: `X[O]` may be followed by `"label"` on the
+        // SAME line. We deliberately use inline-only whitespace for the
+        // lookup — multi-line whitespace would silently advance `stream`
+        // past a trailing blank line and inflate the block's endLine,
+        // breaking sticky-comment detection downstream. Label spanning
+        // multiple lines is grammatically meaningless anyway (per
+        // spec/04-validator.md rule 21, labels are short identifiers).
         let label: StringLiteral | undefined;
-        {
-            // Look ahead past inline whitespace (and continuation newlines) for `"`.
-            // We DO consume the whitespace if a `"` follows — otherwise the parser
-            // would treat the next-token search for `,` / start-of-decl ambiguously.
-            // Snapshot is unnecessary: if we don't see `"`, the only thing consumed
-            // is whitespace, which would have been consumed by the caller anyway
-            // before testing the next separator.
-            consumeWhitespaceMultilineForDecl(stream);
-            if (stream.peek() === '"') {
-                const lit = parseStringLiteralRequired(stream, errors);
-                if (lit) label = lit;
-            }
+        consumeInlineWhitespace(stream);
+        if (stream.peek() === '"') {
+            const lit = parseStringLiteralRequired(stream, errors);
+            if (lit) label = lit;
         }
         const endLoc = combineLocation(
             { file: stream.filePath, range: { start: startPos, end: startPos } },
@@ -1362,11 +1392,14 @@ type Group =
 interface ActivityBodyResult {
     boundary: BoundaryArrow[];
     blocks: FunctionalBlock[];
+    boundaryDividers: BlockDivider[];
+    blocksDividers: BlockDivider[];
     floatingFromBody: Comment[];
 }
 
 interface ContextBodyResult {
     tunnels: TunnelDecl[];
+    tunnelsDividers: BlockDivider[];
     rootRef: RootReference | null;
     floatingFromBody: Comment[];
 }
@@ -1405,6 +1438,41 @@ function splitGroups(items: RawItem[]): {
     return { groups };
 }
 
+// A comment is a "block divider" iff a blank line follows it in source.
+// Detection: gap to the NEXT item's startLine is >= 2 (gap of 1 means
+// adjacent line; >=2 means at least one blank line between). Comments at the
+// end of the body don't have a "next item" to test against — they remain
+// sticky/floating (probably trailing notes, not dividers).
+//
+// **Inline exception.** Comments that begin on the SAME source line as the
+// previous non-comment item (e.g., `X "name" # inline note`) are inline
+// trivia attached to that anchor — NOT dividers, even if a blank line
+// follows on the next source row. This keeps round-trip stable: the
+// formatter re-emits inline comments on the same physical line, and the
+// re-parser must recognise them as inline again.
+function isDividerComment(
+    items: readonly RawItem[],
+    index: number,
+): boolean {
+    const it = items[index]!;
+    if (it.kind !== "comment") return false;
+    // Find the previous non-comment item (skip over chains of comments).
+    let prev: RawItem | undefined;
+    for (let i = index - 1; i >= 0; i -= 1) {
+        const candidate = items[i]!;
+        if (candidate.kind !== "comment") {
+            prev = candidate;
+            break;
+        }
+    }
+    if (prev !== undefined && prev.endLine === it.startLine) {
+        return false; // inline trivia, not a divider
+    }
+    const next = items[index + 1];
+    if (next === undefined) return false;
+    return next.startLine - it.endLine >= 2;
+}
+
 function classifyActivityItems(
     items: RawItem[],
     errors: Diagnostic[]
@@ -1413,20 +1481,36 @@ function classifyActivityItems(
     const blocks: FunctionalBlock[] = [];
     const floating: Comment[] = [];
 
+    // Pre-scan: identify block-divider comments before sticky-classification
+    // so they don't get attached as commentsAbove/commentsBelow of anchors.
+    // A comment is a divider iff a blank line follows it in source (gap to
+    // next item's startLine >= 2). Trailing blank ABOVE the comment is not
+    // required — the formatter will inject one if missing.
+    const dividerComments = new Set<RawItem>();
+    for (let i = 0; i < items.length; i += 1) {
+        if (isDividerComment(items, i)) dividerComments.add(items[i]!);
+    }
+
     const { groups } = splitGroups(items);
     for (const group of groups) {
-        // Collect indices of anchors (blocks). Boundary arrows aren't sticky anchors
-        // but they're still anchors that "separate" comments — comments adjacent to
-        // boundary arrows or in groups with no block become floating.
-        const blockIndices: number[] = [];
+        // Anchors = boundary arrows OR functional blocks. Comments stick to the
+        // nearest anchor within the same blank-separated group (per spec/02-
+        // formatting.md «Комментарии при сортировке блоков»). Items between
+        // anchors: comments above the next anchor go to its commentsAbove;
+        // comments after the LAST anchor go to its commentsBelow.
+        const anchorIndices: number[] = [];
         for (let i = 0; i < group.items.length; i += 1) {
             const it = group.items[i]!;
-            if (it.kind === "block") blockIndices.push(i);
+            if (it.kind === "block" || it.kind === "boundary") {
+                anchorIndices.push(i);
+            }
         }
-        if (blockIndices.length === 0) {
+
+        // No anchors in group — all items are comments or misplaced
+        // tunnel/rootRef. Comments → floating, tunnel/rootRef → error.
+        if (anchorIndices.length === 0) {
             for (const it of group.items) {
                 if (it.kind === "comment") floating.push(it.comment);
-                else if (it.kind === "boundary") boundary.push(it.arrow);
                 else if (it.kind === "tunnel") {
                     addError(
                         errors,
@@ -1444,69 +1528,190 @@ function classifyActivityItems(
             continue;
         }
 
-        // Process: for each block at index `bi`, gather:
-        //   commentsAbove from items[startSlice...bi-1] where startSlice is
-        //     either start of group OR (prev block index + 1).
-        //   commentsBelow only for LAST block in group: items[lastBi+1...end].
-        //   leadingBlankLine of FIRST block in group = group.leadingBlank; others = false.
+        // Linear pass through the group. For each comment:
+        //   - If a previous anchor exists AND comment's startLine equals that
+        //     anchor's endLine (i.e., the comment is INLINE on the same source
+        //     line as the previous anchor) — comment becomes that anchor's
+        //     commentsBelow. This catches `M2 "label" # note` and equivalent.
+        //   - Otherwise the comment is queued as a pending "above" pile,
+        //     attached to the next anchor's commentsAbove.
+        // At end of group: any remaining pending pile attaches to the LAST
+        // anchor's commentsBelow (trailing block-of-comments under it).
         //
-        // Non-comment, non-block items inside slice (e.g., boundary, rootRef) — push as floating.
+        // Each anchor is then emitted with its own collected sticky lists.
+        interface PendingAnchor {
+            readonly aIdx: number;
+            readonly anchorIndex: number;
+            readonly commentsAbove: Comment[];
+            readonly commentsBelow: Comment[];
+            inlineComment?: Comment;
+        }
+        const pendingAnchors: PendingAnchor[] = anchorIndices.map(
+            (anchorIndex, aIdx) => ({
+                aIdx,
+                anchorIndex,
+                commentsAbove: [],
+                commentsBelow: [],
+            }),
+        );
 
-        let cursor = 0; // current item index in group
-        for (let bIdx = 0; bIdx < blockIndices.length; bIdx += 1) {
-            const blockIndex = blockIndices[bIdx]!;
-            const before = group.items.slice(cursor, blockIndex);
-            const commentsAbove: Comment[] = [];
-            for (const it of before) {
-                if (it.kind === "comment") commentsAbove.push(it.comment);
-                else if (it.kind === "boundary") boundary.push(it.arrow);
-                else if (it.kind === "tunnel") {
-                    addError(
-                        errors,
-                        it.tunnel.location,
-                        `Tunnel declaration '${it.tunnel.id}' is not allowed inside 'activity' body — tunnels live in the context A-0 file`
-                    );
-                } else if (it.kind === "rootRef") {
-                    addError(
-                        errors,
-                        it.rootRef.location,
-                        "Root reference '...A0;' is not allowed inside 'activity' body — it lives in the context A-0 file"
-                    );
-                }
+        let pendingAbove: Comment[] = [];
+        let lastAnchor: PendingAnchor | null = null;
+        let nextAnchorPos = 0;
+        // Track the previous item's endLine to detect blank-line gaps in
+        // front of comments. The very first item in a group inherits
+        // `group.leadingBlank` (set by splitGroups) — that's where the
+        // blank-line-above-the-group came from.
+        let prevEndLine = -1;
+        let isFirstInGroup = true;
+
+        for (let i = 0; i < group.items.length; i += 1) {
+            const it = group.items[i]!;
+            const hadBlankAbove = isFirstInGroup
+                ? group.leadingBlank
+                : prevEndLine >= 0 && it.startLine - prevEndLine >= 2;
+            isFirstInGroup = false;
+            if (it.kind === "block" || it.kind === "boundary") {
+                const anchor = pendingAnchors[nextAnchorPos]!;
+                anchor.commentsAbove.push(...pendingAbove);
+                pendingAbove = [];
+                lastAnchor = anchor;
+                nextAnchorPos += 1;
+                prevEndLine = it.endLine;
+                continue;
             }
-            const blockItem = group.items[blockIndex]! as RawBlock;
-            const isLastBlock = bIdx === blockIndices.length - 1;
-            const commentsBelow: Comment[] = [];
-            if (isLastBlock) {
-                const after = group.items.slice(blockIndex + 1);
-                for (const it of after) {
-                    if (it.kind === "comment") commentsBelow.push(it.comment);
-                    else if (it.kind === "boundary") boundary.push(it.arrow);
-                    else if (it.kind === "tunnel") {
-                        addError(
-                            errors,
-                            it.tunnel.location,
-                            `Tunnel declaration '${it.tunnel.id}' is not allowed inside 'activity' body — tunnels live in the context A-0 file`
-                        );
-                    } else if (it.kind === "rootRef") {
-                        addError(
-                            errors,
-                            it.rootRef.location,
-                            "Root reference '...A0;' is not allowed inside 'activity' body — it lives in the context A-0 file"
-                        );
+            if (it.kind === "comment") {
+                // Divider comments bypass sticky-attribution entirely —
+                // they're collected into `floating` and reclassified by the
+                // postprocess loop into boundaryDividers / blocksDividers.
+                if (dividerComments.has(it)) {
+                    floating.push(it.comment);
+                    prevEndLine = it.endLine;
+                    continue;
+                }
+                const lastEndLine =
+                    lastAnchor !== null
+                        ? group.items[lastAnchor.anchorIndex]!.endLine
+                        : -1;
+                const taggedComment: Comment = {
+                    ...it.comment,
+                    leadingBlankLine: hadBlankAbove,
+                };
+                if (
+                    lastAnchor !== null &&
+                    it.comment.location.range.start.line === lastEndLine
+                ) {
+                    // Inline comment on the same source line as the previous
+                    // anchor's last token. Lives in a dedicated `inlineComment`
+                    // slot so the formatter can re-emit it inline (`X "name" # note`)
+                    // rather than dropping it to the next line as commentsBelow.
+                    // Only the first inline comment is captured; subsequent
+                    // ones on the same line are pathological (parser emits one
+                    // comment per `#`-prefixed segment), so we keep the first
+                    // and silently coalesce — pathological input is not a
+                    // round-trip target.
+                    if (lastAnchor.inlineComment === undefined) {
+                        lastAnchor.inlineComment = taggedComment;
+                    } else {
+                        pendingAbove.push(taggedComment);
                     }
+                } else {
+                    pendingAbove.push(taggedComment);
                 }
+                prevEndLine = it.endLine;
+                continue;
             }
-            blocks.push({
-                ...blockItem.block,
-                leadingBlankLine: bIdx === 0 ? group.leadingBlank : false,
-                commentsAbove,
-                commentsBelow,
-            });
-            cursor = blockIndex + 1;
+            if (it.kind === "tunnel") {
+                addError(
+                    errors,
+                    it.tunnel.location,
+                    `Tunnel declaration '${it.tunnel.id}' is not allowed inside 'activity' body — tunnels live in the context A-0 file`
+                );
+            } else if (it.kind === "rootRef") {
+                addError(
+                    errors,
+                    it.rootRef.location,
+                    "Root reference '...A0;' is not allowed inside 'activity' body — it lives in the context A-0 file"
+                );
+            }
+        }
+        // Trailing pending pile → commentsBelow of the last anchor.
+        if (lastAnchor !== null) {
+            lastAnchor.commentsBelow.push(...pendingAbove);
+        } else {
+            // No anchors in group reached — items already handled above by
+            // the `anchorIndices.length === 0` branch. Defensive no-op.
+            for (const c of pendingAbove) floating.push(c);
+        }
+
+        for (const pending of pendingAnchors) {
+            const isFirstAnchor = pending.aIdx === 0;
+            const anchorItem = group.items[pending.anchorIndex]!;
+            if (anchorItem.kind === "block") {
+                blocks.push({
+                    ...anchorItem.block,
+                    leadingBlankLine: isFirstAnchor ? group.leadingBlank : false,
+                    commentsAbove: pending.commentsAbove,
+                    commentsBelow: pending.commentsBelow,
+                    ...(pending.inlineComment !== undefined
+                        ? { inlineComment: pending.inlineComment }
+                        : {}),
+                });
+            } else if (anchorItem.kind === "boundary") {
+                boundary.push({
+                    ...anchorItem.arrow,
+                    leadingBlankLine: isFirstAnchor ? group.leadingBlank : false,
+                    commentsAbove: pending.commentsAbove,
+                    commentsBelow: pending.commentsBelow,
+                    ...(pending.inlineComment !== undefined
+                        ? { inlineComment: pending.inlineComment }
+                        : {}),
+                } as BoundaryArrow);
+            }
         }
     }
-    return { boundary, blocks, floatingFromBody: floating };
+    // Split body-floating comments into boundary-dividers, blocks-dividers,
+    // and remaining floating tail. A floating comment IS a "block divider" by
+    // definition: it's already separated from neighbouring anchors by at
+    // least one blank line (otherwise classify would have stuck it). Section
+    // (boundary vs blocks) is determined by source-line position relative to
+    // the first functional block. `afterIndex` is the input-order position
+    // of the immediately preceding section anchor.
+    const firstBlockLine =
+        blocks.length > 0
+            ? Math.min(
+                  ...blocks.map((b) => b.location.range.start.line),
+              )
+            : Number.POSITIVE_INFINITY;
+    const boundaryDividers: BlockDivider[] = [];
+    const blocksDividers: BlockDivider[] = [];
+    const trulyFloating: Comment[] = [];
+    for (const c of floating) {
+        const line = c.location.range.start.line;
+        if (line < firstBlockLine) {
+            const preceding = boundary.filter(
+                (b) => b.location.range.start.line < line,
+            ).length;
+            boundaryDividers.push({ comment: c, afterIndex: preceding - 1 });
+        } else if (blocks.length > 0) {
+            const preceding = blocks.filter(
+                (b) => b.location.range.start.line < line,
+            ).length;
+            blocksDividers.push({ comment: c, afterIndex: preceding - 1 });
+        } else {
+            // No blocks; comment lives strictly inside body but with no anchor
+            // ever following — treat as tail floating.
+            trulyFloating.push(c);
+        }
+    }
+
+    return {
+        boundary,
+        blocks,
+        boundaryDividers,
+        blocksDividers,
+        floatingFromBody: trulyFloating,
+    };
 }
 
 function classifyContextItems(
@@ -1516,6 +1721,13 @@ function classifyContextItems(
     const tunnels: TunnelDecl[] = [];
     let rootRef: RootReference | null = null;
     const floating: Comment[] = [];
+
+    // Pre-scan: identify block-divider comments (same rule as activity body
+    // — comment with blank line below) so they bypass sticky-attribution.
+    const dividerComments = new Set<RawItem>();
+    for (let i = 0; i < items.length; i += 1) {
+        if (isDividerComment(items, i)) dividerComments.add(items[i]!);
+    }
 
     const { groups } = splitGroups(items);
     for (const group of groups) {
@@ -1546,14 +1758,27 @@ function classifyContextItems(
             }
             continue;
         }
+        // Filter out divider comments from this group — they go directly to
+        // `floating` and are reclassified into `tunnelsDividers` by the
+        // postprocess loop below.
+        for (const it of group.items) {
+            if (it.kind === "comment" && dividerComments.has(it)) {
+                floating.push(it.comment);
+            }
+        }
         let cursor = 0;
         for (let ai = 0; ai < anchorIndices.length; ai += 1) {
             const anchorIndex = anchorIndices[ai]!;
             const before = group.items.slice(cursor, anchorIndex);
             const commentsAbove: Comment[] = [];
             for (const it of before) {
-                if (it.kind === "comment") commentsAbove.push(it.comment);
-                else if (it.kind === "boundary") {
+                if (it.kind === "comment") {
+                    if (dividerComments.has(it)) {
+                        floating.push(it.comment);
+                    } else {
+                        commentsAbove.push(it.comment);
+                    }
+                } else if (it.kind === "boundary") {
                     addError(
                         errors,
                         it.arrow.location,
@@ -1573,8 +1798,13 @@ function classifyContextItems(
             if (isLast) {
                 const after = group.items.slice(anchorIndex + 1);
                 for (const it of after) {
-                    if (it.kind === "comment") commentsBelow.push(it.comment);
-                    else if (it.kind === "boundary") {
+                    if (it.kind === "comment") {
+                        if (dividerComments.has(it)) {
+                            floating.push(it.comment);
+                        } else {
+                            commentsBelow.push(it.comment);
+                        }
+                    } else if (it.kind === "boundary") {
                         addError(
                             errors,
                             it.arrow.location,
@@ -1615,7 +1845,29 @@ function classifyContextItems(
             cursor = anchorIndex + 1;
         }
     }
-    return { tunnels, rootRef, floatingFromBody: floating };
+
+    // Postprocess: distribute floating divider-comments into tunnelsDividers
+    // with afterIndex based on input-order position relative to tunnels.
+    const tunnelsDividers: BlockDivider[] = [];
+    const trulyFloating: Comment[] = [];
+    for (const c of floating) {
+        const line = c.location.range.start.line;
+        const preceding = tunnels.filter(
+            (t) => t.location.range.start.line < line,
+        ).length;
+        if (tunnels.length === 0) {
+            trulyFloating.push(c);
+        } else {
+            tunnelsDividers.push({ comment: c, afterIndex: preceding - 1 });
+        }
+    }
+
+    return {
+        tunnels,
+        tunnelsDividers,
+        rootRef,
+        floatingFromBody: trulyFloating,
+    };
 }
 
 // Silence unused exports.

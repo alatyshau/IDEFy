@@ -14,7 +14,7 @@
 
 import * as vscode from "vscode";
 import type { FsAdapter } from "@idefy/loader";
-import { sidecarPathFor } from "@idefy/loader";
+import { findScanRoot, sidecarPathFor } from "@idefy/loader";
 import { uriToPath } from "../fs/adapter.js";
 import type { ValidationPipeline } from "../diagnostics/pipeline.js";
 
@@ -30,18 +30,19 @@ export function registerSidecarLifecycle(
         false,
     );
 
-    const onCreate = watcher.onDidCreate((uri) => {
+    const onCreate = watcher.onDidCreate(async (uri) => {
         pipeline.invalidateFile(uri);
-        rescheduleIfOpen(pipeline, uri);
+        await revalidateAffectedScanRoot(pipeline, fs, uri, output);
     });
 
-    const onChange = watcher.onDidChange((uri) => {
+    const onChange = watcher.onDidChange(async (uri) => {
         pipeline.invalidateFile(uri);
-        rescheduleIfOpen(pipeline, uri);
+        await revalidateAffectedScanRoot(pipeline, fs, uri, output);
     });
 
     const onDelete = watcher.onDidDelete(async (uri) => {
         pipeline.invalidateFile(uri);
+        await revalidateAffectedScanRoot(pipeline, fs, uri, output);
         try {
             const sidecarPath = sidecarPathFor(uriToPath(uri));
             if (await fs.exists(sidecarPath)) {
@@ -59,6 +60,8 @@ export function registerSidecarLifecycle(
             if (!isIdef0Path(oldUri.path)) continue;
             pipeline.invalidateFile(oldUri);
             pipeline.invalidateFile(newUri);
+            await revalidateAffectedScanRoot(pipeline, fs, oldUri, output);
+            await revalidateAffectedScanRoot(pipeline, fs, newUri, output);
             try {
                 const oldSidecar = sidecarPathFor(uriToPath(oldUri));
                 if (!(await fs.exists(oldSidecar))) continue;
@@ -75,22 +78,26 @@ export function registerSidecarLifecycle(
     return [watcher, onCreate, onChange, onDelete, onRename];
 }
 
-function rescheduleIfOpen(
+// Determine the scan root that owns the changed file and refresh diagnostics
+// for the whole project rooted there — independently of which editor is
+// currently active. Without this, an external change to a closed file would
+// leave stale diagnostics in Problems panel until the user happened to
+// switch to the affected tab.
+async function revalidateAffectedScanRoot(
     pipeline: ValidationPipeline,
+    fs: FsAdapter,
     uri: vscode.Uri,
-): void {
-    const uriStr = uri.toString();
-    for (const doc of vscode.workspace.textDocuments) {
-        if (doc.uri.toString() === uriStr && doc.languageId === "idef0") {
-            pipeline.scheduleRevalidate(doc);
-            return;
-        }
-    }
-    const editor = vscode.window.visibleTextEditors.find(
-        (e) => e.document.languageId === "idef0",
-    );
-    if (editor !== undefined) {
-        pipeline.scheduleRevalidate(editor.document);
+    output: vscode.OutputChannel,
+): Promise<void> {
+    try {
+        const path = uriToPath(uri);
+        const scanRoot = await findScanRoot(path, fs);
+        if (scanRoot === null) return; // file lives outside any `src/idef0/`
+        await pipeline.revalidateScanRoot(scanRoot);
+    } catch (err) {
+        output.appendLine(
+            `revalidate-on-change failed for ${uri.toString()}: ${formatError(err)}`,
+        );
     }
 }
 

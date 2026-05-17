@@ -1,6 +1,7 @@
 import type {
     ActivityAST,
     ActivityId,
+    BlockDivider,
     BoundaryArrow,
     Comment,
     ConsumedArrowRef,
@@ -13,6 +14,7 @@ import type {
 } from "../types.js";
 import { InvariantViolation } from "../types.js";
 import { compareActivityIds, compareArrowKeys } from "../ids.js";
+import { sortBlocks, type BlockInput } from "./block-sorter.js";
 
 const INDENT = "    "; // 4 spaces — one indent step
 // Per spec/02-formatting.md, boundary group order is I → C → M → O → T.
@@ -37,6 +39,21 @@ function boundarySortKey(a: BoundaryArrow): string {
         case "tunnel":
             return a.id;
     }
+}
+
+const BOUNDARY_GROUP_ORDER: Record<"I" | "C" | "M" | "O" | "T", number> = {
+    I: 0,
+    C: 1,
+    M: 2,
+    O: 3,
+    T: 4,
+};
+
+function compareBoundaryArrow(a: BoundaryArrow, b: BoundaryArrow): number {
+    const ga = BOUNDARY_GROUP_ORDER[boundaryGroup(a)];
+    const gb = BOUNDARY_GROUP_ORDER[boundaryGroup(b)];
+    if (ga !== gb) return ga - gb;
+    return compareArrowKeys(boundarySortKey(a), boundarySortKey(b));
 }
 
 function boundaryGroup(a: BoundaryArrow): "I" | "C" | "M" | "O" | "T" {
@@ -92,56 +109,172 @@ function formatActivity(ast: ActivityAST, options: FormatOptions): string {
     appendPreHeaderComments(lines, ast);
     lines.push(`activity ${ast.id} ${quoteString(ast.name.value)} {`);
 
-    // Boundary arrows: sorted by group (I → C → M → O → T) then by sort key
-    // within group (flat before bracket).
-    const boundary = sortBoundary(ast.boundary);
-    for (const b of boundary) {
-        lines.push(`${INDENT}${renderBoundaryArrow(b)}`);
-    }
-
-    if (boundary.length > 0 && ast.blocks.length > 0) {
-        lines.push("");
-    }
-
-    const sortedBlocks = [...ast.blocks].sort((a, b) =>
-        compareActivityIds(a.id, b.id)
+    // Boundary section: anchors split into user-blocks by `boundaryDividers`,
+    // then redistributed via the generic block-sorter (preserves divider
+    // tags, minimises element movement). The sorter returns blocks; we emit
+    // each with anchors and the trailing divider-comment.
+    const boundaryBlocks = buildBlockInputs(
+        ast.boundary,
+        ast.boundaryDividers,
     );
-    if (sortedBlocks.length === 0) {
-        lines.push(`}`);
+    const sortedBoundaryBlocks = sortBlocks(boundaryBlocks, {
+        compare: compareBoundaryArrow,
+    });
+    emitBoundaryBlocks(lines, sortedBoundaryBlocks);
+
+    // Decomposition section: same pattern with functional blocks.
+    const decompBlocks = buildBlockInputs(ast.blocks, ast.blocksDividers);
+    const sortedDecompBlocks = sortBlocks(decompBlocks, {
+        compare: (a, b) => compareActivityIds(a.id, b.id),
+    });
+
+    const hasBoundary = ast.boundary.length > 0 || hasAnyDividers(ast.boundaryDividers);
+    const hasBlocks = ast.blocks.length > 0 || hasAnyDividers(ast.blocksDividers);
+    if (hasBoundary && hasBlocks) {
+        if (lines[lines.length - 1] !== "") lines.push("");
+    }
+
+    if (ast.blocks.length === 0 && !hasAnyDividers(ast.blocksDividers)) {
+        lines.push("}");
         return lines.join("\n") + "\n";
     }
 
-    const pre = sortedBlocks.map(preRenderBlock);
-    const modes = classifyBlockModes(pre, options.maxLineWidth);
-    const mode1 = pre.filter((p) => modes.get(p.block.id) === "mode1");
-    const widths = computeWidths(mode1);
-
-    let prevMode: BlockMode | null = null;
-    for (const p of pre) {
-        const mode = modes.get(p.block.id);
-        if (!mode) {
-            throw new InvariantViolation(
-                `formatter: no mode classified for block '${p.block.id}'`
-            );
-        }
-        if (prevMode !== null) {
-            const needBlank = mode !== "mode1" || prevMode !== "mode1";
-            if (needBlank) lines.push("");
-        }
-        appendComments(lines, p.block.commentsAbove);
-        if (mode === "mode1") {
-            lines.push(renderMode1(p, widths));
-        } else if (mode === "mode2") {
-            lines.push(...renderMode2(p, options.maxLineWidth));
-        } else {
-            lines.push(...renderMode3(p, options.maxLineWidth));
-        }
-        appendComments(lines, p.block.commentsBelow);
-        prevMode = mode;
-    }
+    emitDecompositionBlocks(lines, sortedDecompBlocks, options);
 
     lines.push("}");
     return lines.join("\n") + "\n";
+}
+
+function hasAnyDividers(dividers: readonly BlockDivider[] | undefined): boolean {
+    return dividers !== undefined && dividers.length > 0;
+}
+
+// Convert a flat anchor list + ordered dividers into BlockInput<Anchor, Comment>[]
+// for the generic block-sorter. Each divider's `afterIndex` says which anchor
+// it sits after (-1 means before-all; length-1 means after-last).
+function buildBlockInputs<A>(
+    anchors: readonly A[],
+    dividers: readonly BlockDivider[] | undefined,
+): BlockInput<A, Comment>[] {
+    if (dividers === undefined || dividers.length === 0) {
+        return [{ elements: [...anchors], tagAfter: null }];
+    }
+    // Sort dividers by afterIndex so we walk the anchor list left-to-right.
+    const sortedDividers = [...dividers].sort(
+        (a, b) => a.afterIndex - b.afterIndex,
+    );
+    const result: BlockInput<A, Comment>[] = [];
+    let cursor = 0;
+    for (const d of sortedDividers) {
+        const sliceEnd = Math.max(cursor, d.afterIndex + 1);
+        result.push({
+            elements: anchors.slice(cursor, sliceEnd),
+            tagAfter: d.comment,
+        });
+        cursor = sliceEnd;
+    }
+    // Trailing block (after the last divider).
+    result.push({
+        elements: anchors.slice(cursor),
+        tagAfter: null,
+    });
+    return result;
+}
+
+function emitBoundaryBlocks(
+    lines: string[],
+    blocks: { elements: readonly BoundaryArrow[]; tagAfter: Comment | null }[],
+): void {
+    for (let i = 0; i < blocks.length; i += 1) {
+        const block = blocks[i]!;
+        // Within each user-block, boundary anchors are already in sorted order
+        // (block-sorter pre-sorted using compareBoundaryArrow).
+        for (const b of block.elements) {
+            appendComments(lines, b.commentsAbove);
+            const head = `${INDENT}${renderBoundaryArrow(b)}`;
+            lines.push(
+                b.inlineComment !== undefined
+                    ? `${head} # ${b.inlineComment.text}`
+                    : head,
+            );
+            appendComments(lines, b.commentsBelow);
+        }
+        if (block.tagAfter !== null) {
+            // Divider sits between this user-block and the next, with blank
+            // lines on both sides. `appendBlockDivider` keeps the
+            // up-to-one-blank-line contract.
+            appendBlockDivider(lines, block.tagAfter);
+        }
+    }
+}
+
+function emitDecompositionBlocks(
+    lines: string[],
+    blocks: {
+        readonly elements: readonly FunctionalBlock[];
+        readonly tagAfter: Comment | null;
+    }[],
+    options: FormatOptions,
+): void {
+    // Flatten for Mode classification + width computation. Mode 1 column
+    // alignment is computed across ALL blocks regardless of user-block
+    // partitioning — the user-blocks are just visual grouping.
+    const flatBlocks = blocks.flatMap((b) => [...b.elements]);
+    const pre = flatBlocks.map(preRenderBlock);
+    const modes = classifyBlockModes(pre, options.maxLineWidth);
+    const mode1 = pre.filter((p) => modes.get(p.block.id) === "mode1");
+    const widths = computeWidths(mode1);
+    const preByBlockId = new Map(pre.map((p) => [p.block.id, p]));
+
+    let prevMode: BlockMode | null = null;
+    let firstBlockEmitted = false;
+    for (const userBlock of blocks) {
+        for (const fb of userBlock.elements) {
+            const p = preByBlockId.get(fb.id)!;
+            const mode = modes.get(p.block.id);
+            if (!mode) {
+                throw new InvariantViolation(
+                    `formatter: no mode classified for block '${p.block.id}'`,
+                );
+            }
+            if (firstBlockEmitted && prevMode !== null) {
+                const needBlank = mode !== "mode1" || prevMode !== "mode1";
+                if (needBlank && lines[lines.length - 1] !== "") {
+                    lines.push("");
+                }
+            }
+            appendComments(lines, p.block.commentsAbove);
+            if (mode === "mode1") {
+                lines.push(renderMode1(p, widths));
+            } else if (mode === "mode2") {
+                lines.push(...renderMode2(p, options.maxLineWidth));
+            } else {
+                lines.push(...renderMode3(p, options.maxLineWidth));
+            }
+            if (p.block.inlineComment !== undefined) {
+                const last = lines[lines.length - 1]!;
+                lines[lines.length - 1] =
+                    `${last} # ${p.block.inlineComment.text}`;
+            }
+            appendComments(lines, p.block.commentsBelow);
+            firstBlockEmitted = true;
+            prevMode = mode;
+        }
+        if (userBlock.tagAfter !== null) {
+            appendBlockDivider(lines, userBlock.tagAfter);
+            prevMode = null; // force blank line between divider and next block
+        }
+    }
+}
+
+function appendBlockDivider(lines: string[], comment: Comment): void {
+    // Blank line above (unless previous line already blank).
+    if (lines.length > 0 && lines[lines.length - 1] !== "") {
+        lines.push("");
+    }
+    lines.push(`${INDENT}# ${comment.text}`);
+    // Blank line below.
+    lines.push("");
 }
 
 function appendComments(
@@ -149,6 +282,18 @@ function appendComments(
     comments: readonly Comment[]
 ): void {
     for (const c of comments) {
+        // Per spec/02-formatting.md: «Если перед или после полнострочного
+        // комментария есть пустая строка, эти строки надо сохранять, но не
+        // больше одной». The flag rides with the Comment node — set by the
+        // parser when it sees a blank-line gap above the comment in source.
+        if (c.leadingBlankLine === true) {
+            // Coalesce: don't emit a second blank if one is already at the
+            // tail (e.g., between boundary section and blocks the formatter
+            // emits its own blank, and we don't want it doubled).
+            if (lines.length > 0 && lines[lines.length - 1] !== "") {
+                lines.push("");
+            }
+        }
         lines.push(`${INDENT}# ${c.text}`);
     }
 }
@@ -176,19 +321,30 @@ function formatContext(ast: ContextAST, options: FormatOptions): string {
     appendPreHeaderComments(lines, ast);
     lines.push(`context A-0 ${quoteString(ast.name.value)} {`);
 
-    const sortedTunnels = [...ast.tunnels].sort((a, b) =>
-        compareArrowKeys(a.id, b.id)
-    );
-    for (const t of sortedTunnels) {
-        appendComments(lines, t.commentsAbove);
-        lines.push(
-            `${INDENT}${t.id} ${quoteString(t.description.value)}`
-        );
-        appendComments(lines, t.commentsBelow);
+    const tunnelBlocks = buildBlockInputs(ast.tunnels, ast.tunnelsDividers);
+    const sortedTunnelBlocks = sortBlocks(tunnelBlocks, {
+        compare: (a, b) => compareArrowKeys(a.id, b.id),
+    });
+    let anyTunnelEmitted = false;
+    for (let i = 0; i < sortedTunnelBlocks.length; i += 1) {
+        const block = sortedTunnelBlocks[i]!;
+        for (const t of block.elements) {
+            appendComments(lines, t.commentsAbove);
+            lines.push(
+                `${INDENT}${t.id} ${quoteString(t.description.value)}`,
+            );
+            appendComments(lines, t.commentsBelow);
+            anyTunnelEmitted = true;
+        }
+        if (block.tagAfter !== null) {
+            appendBlockDivider(lines, block.tagAfter);
+        }
     }
 
     if (ast.rootRef) {
-        if (sortedTunnels.length > 0) lines.push("");
+        if (anyTunnelEmitted && lines[lines.length - 1] !== "") {
+            lines.push("");
+        }
         appendComments(lines, ast.rootRef.commentsAbove);
         lines.push(`${INDENT}...${ast.rootRef.targetId}`);
         appendComments(lines, ast.rootRef.commentsBelow);

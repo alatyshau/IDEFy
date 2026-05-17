@@ -88,3 +88,72 @@ describe("paths — POSIX `.` / `..` resolution (per spec invariant)", () => {
         expect(join("/a", "b", "..", "c")).toBe("/a/c");
     });
 });
+
+describe("paths — preserve URI scheme/authority through operations", () => {
+    // BUG: previous implementation treated URI strings as relative paths,
+    // collapsing `vscode-remote://wsl/home/foo` into `vscode-remote:/wsl/home/foo`
+    // (one slash less). All path utilities must be transparent to the
+    // `<scheme>://<authority>` prefix — the prefix passes through verbatim,
+    // and only the path portion is normalised/split/joined.
+
+    it("normalize preserves `<scheme>://<authority>` prefix", () => {
+        expect(
+            normalize("vscode-remote://wsl.localhost/home/foo/A0.idef0"),
+        ).toBe("vscode-remote://wsl.localhost/home/foo/A0.idef0");
+        expect(normalize("file:///Users/me/proj/A0.idef0")).toBe(
+            "file:///Users/me/proj/A0.idef0",
+        );
+        expect(normalize("vscode-vfs://github/user/repo/A0.idef0")).toBe(
+            "vscode-vfs://github/user/repo/A0.idef0",
+        );
+    });
+
+    it("normalize resolves `..` inside path portion of a URI", () => {
+        expect(
+            normalize("vscode-remote://wsl/a/b/../c/A0.idef0"),
+        ).toBe("vscode-remote://wsl/a/c/A0.idef0");
+    });
+
+    it("basename of a URI returns last path segment", () => {
+        expect(
+            basename("vscode-remote://wsl/home/foo/A0.idef0"),
+        ).toBe("A0.idef0");
+    });
+
+    it("dirname of a URI returns parent path with scheme intact", () => {
+        expect(
+            dirname("vscode-remote://wsl/home/foo/A0.idef0"),
+        ).toBe("vscode-remote://wsl/home/foo");
+    });
+
+    it("isDescendant works inside a single URI scheme/authority", () => {
+        expect(
+            isDescendant(
+                "vscode-remote://wsl/home/foo",
+                "vscode-remote://wsl/home/foo/bar/A0.idef0",
+            ),
+        ).toBe(true);
+    });
+
+    it("isDescendant is false across different scheme/authority", () => {
+        // Same path portion under different hosts must NOT collide.
+        expect(
+            isDescendant(
+                "vscode-remote://hostA/home/foo",
+                "vscode-remote://hostB/home/foo/bar",
+            ),
+        ).toBe(false);
+        expect(
+            isDescendant(
+                "file:///Users/me/foo",
+                "vscode-remote://wsl/Users/me/foo/bar",
+            ),
+        ).toBe(false);
+    });
+
+    it("join applies relative parts inside URI without losing prefix", () => {
+        expect(
+            join("vscode-remote://wsl/home/foo", "bar", "A0.idef0"),
+        ).toBe("vscode-remote://wsl/home/foo/bar/A0.idef0");
+    });
+});

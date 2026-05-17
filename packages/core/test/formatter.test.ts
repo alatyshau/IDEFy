@@ -22,6 +22,35 @@ const SCENARIOS = [
     "trailer_dropped",
 ] as const;
 
+describe("formatter: floating body comments survive formatting", () => {
+    // REGRESSION: standalone comments separated from anchors by blank lines
+    // ended up in `floatingComments` and were silently dropped by the formatter.
+    // Per spec/02-formatting.md «Если перед или после полнострочного
+    // комментария есть пустая строка, эти строки надо сохранять» — comments
+    // must NOT be dropped. They are emitted at the tail of the body (before
+    // the closing `}`), each retaining its own up-to-one blank line padding.
+    it("emits free-standing comments before the closing brace", () => {
+        const input = `activity A0 "root" {
+    I1 "in"
+
+    # standalone separator
+    # ──────────
+
+    O1 "out"
+
+    A1 "child" : I1 -> X11[O1]
+}
+`;
+        const { ast, errors } = parse(input);
+        expect(errors).toEqual([]);
+        const out = format(ast!, DEFAULT_OPTS);
+        // The two floating comments must appear in the output (not silently
+        // dropped) regardless of where in body they sat.
+        expect(out).toContain("# standalone separator");
+        expect(out).toContain("# ──────────");
+    });
+});
+
 describe.each(SCENARIOS)("formatter fixture: %s", (scenario) => {
     it("format(parse(input.idef0)) === expected.idef0", () => {
         const input = readFixture("formatter", scenario, "input.idef0");

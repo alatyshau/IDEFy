@@ -277,6 +277,102 @@ export class ValidationPipeline implements vscode.Disposable {
         this.parsedCache.clear();
     }
 
+    // Revalidate **scan root** independently of which editor is active. Triggered
+    // by FS watcher events on closed-file create/change/delete/rename — without
+    // this entry point, diagnostics for `.idef0` files modified outside the
+    // active editor (other window, git pull, branch switch) silently go stale
+    // until the user clicks back into the affected tab.
+    //
+    // We don't have a TextDocument to anchor on; live-document overrides only
+    // apply if the user has the file open in some editor and we can find it
+    // via `vscode.workspace.textDocuments`. Otherwise the parser reads from FS
+    // via the adapter (which is exactly how stale-cache invalidation is
+    // supposed to work after `invalidateFile`).
+    async revalidateScanRoot(scanRoot: string): Promise<void> {
+        try {
+            const discovery = await discoverProjects(scanRoot, this.fs);
+            for (const project of discovery.projects) {
+                await this.revalidateProjectFromFs(project, scanRoot);
+            }
+            const orphanDiags = validateOrphans(discovery.orphans);
+            const nested = diagnosticsForNestedProjects(
+                discovery.nestedProjects,
+            );
+            this.publishToContext(
+                { kind: "scan-root", path: scanRoot },
+                [...orphanDiags, ...nested],
+            );
+        } catch (err) {
+            this.output.appendLine(
+                `revalidateScanRoot(${scanRoot}) failed: ${formatError(err)}`,
+            );
+        }
+    }
+
+    private async revalidateProjectFromFs(
+        project: ProjectDescriptor,
+        scanRoot: string,
+    ): Promise<void> {
+        const parsedFiles: ParsedFile[] = [];
+        for (const filePath of project.files) {
+            const cacheKey = pathToUri(filePath).toString();
+            // Prefer in-memory live content for any open document on this path.
+            const liveDoc = vscode.workspace.textDocuments.find(
+                (d) =>
+                    d.uri.toString() === cacheKey && d.languageId === "idef0",
+            );
+            if (liveDoc !== undefined) {
+                const r = parse(liveDoc.getText(), {
+                    filePath,
+                    basename: basenameOf(filePath),
+                });
+                const pf: ParsedFile = {
+                    path: filePath,
+                    ast: r.ast,
+                    parseErrors: r.errors,
+                };
+                this.parsedCache.set(cacheKey, pf);
+                parsedFiles.push(pf);
+                continue;
+            }
+            const cached = this.parsedCache.get(cacheKey);
+            if (cached !== undefined) {
+                parsedFiles.push(cached);
+                continue;
+            }
+            const content = await this.fs.readFile(filePath);
+            const r = parse(content, {
+                filePath,
+                basename: basenameOf(filePath),
+            });
+            const pf: ParsedFile = {
+                path: filePath,
+                ast: r.ast,
+                parseErrors: r.errors,
+            };
+            this.parsedCache.set(cacheKey, pf);
+            parsedFiles.push(pf);
+        }
+
+        const allDiagnostics: Diagnostic[] = [];
+        for (const pf of parsedFiles) {
+            allDiagnostics.push(...pf.parseErrors);
+        }
+        const assembled = assembleProject(
+            parsedFiles,
+            scanRoot,
+            project.projectRoot,
+        );
+        allDiagnostics.push(...assembled.errors);
+        if (assembled.project !== null) {
+            allDiagnostics.push(...validate(assembled.project));
+        }
+        this.publishToContext(
+            { kind: "scan-root", path: scanRoot },
+            allDiagnostics,
+        );
+    }
+
     dispose(): void {
         this.debouncer.cancelAll();
         for (const d of this.disposables) d.dispose();

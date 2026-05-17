@@ -37,6 +37,13 @@ export interface StringLiteral {
 
 export interface Comment {
     readonly text: string;
+    /**
+     * Was there a blank line in the source immediately above this comment?
+     * Per spec/02-formatting.md, the formatter preserves up to one blank line
+     * around standalone (full-line) comments. Set by parser during sticky
+     * classification; consumed by formatter when emitting the comment.
+     */
+    readonly leadingBlankLine?: boolean;
     readonly location: SourceLocation;
 }
 
@@ -50,6 +57,10 @@ export interface BoundaryArrowFlat {
     readonly role: "I" | "O" | "C" | "M";
     readonly id: ArrowId; // I1, O1, C1, M1
     readonly description: StringLiteral;
+    readonly leadingBlankLine: boolean;
+    readonly commentsAbove: readonly Comment[];
+    readonly commentsBelow: readonly Comment[];
+    readonly inlineComment?: Comment;
     readonly location: SourceLocation;
 }
 
@@ -58,6 +69,10 @@ export interface BoundaryArrowSiblingXConsumed {
     readonly role: "I" | "C" | "M";
     readonly sourceId: ArrowId; // X11 in I[X11], C[X11], M[X11]
     readonly description: StringLiteral;
+    readonly leadingBlankLine: boolean;
+    readonly commentsAbove: readonly Comment[];
+    readonly commentsBelow: readonly Comment[];
+    readonly inlineComment?: Comment;
     readonly location: SourceLocation;
 }
 
@@ -65,6 +80,10 @@ export interface BoundaryArrowParentXOut {
     readonly kind: "parent-x-out";
     readonly sourceId: ArrowId; // X11 in O[X11]
     readonly description: StringLiteral;
+    readonly leadingBlankLine: boolean;
+    readonly commentsAbove: readonly Comment[];
+    readonly commentsBelow: readonly Comment[];
+    readonly inlineComment?: Comment;
     readonly location: SourceLocation;
 }
 
@@ -72,6 +91,10 @@ export interface BoundaryArrowTunnel {
     readonly kind: "tunnel";
     readonly id: ArrowId; // T1 — flat, no role prefix
     readonly description: StringLiteral;
+    readonly leadingBlankLine: boolean;
+    readonly commentsAbove: readonly Comment[];
+    readonly commentsBelow: readonly Comment[];
+    readonly inlineComment?: Comment;
     readonly location: SourceLocation;
 }
 
@@ -89,6 +112,7 @@ export interface TunnelDecl {
     readonly leadingBlankLine: boolean;
     readonly commentsAbove: readonly Comment[];
     readonly commentsBelow: readonly Comment[];
+    readonly inlineComment?: Comment;
     readonly location: SourceLocation;
 }
 
@@ -99,6 +123,7 @@ export interface RootReference {
     readonly leadingBlankLine: boolean;
     readonly commentsAbove: readonly Comment[];
     readonly commentsBelow: readonly Comment[];
+    readonly inlineComment?: Comment;
     readonly location: SourceLocation;
 }
 
@@ -167,10 +192,27 @@ export interface FunctionalBlock {
     readonly leadingBlankLine: boolean;
     readonly commentsAbove: readonly Comment[];
     readonly commentsBelow: readonly Comment[];
+    readonly inlineComment?: Comment;
     readonly location: SourceLocation;
 }
 
 // ─── AST roots ────────────────────────────────────────────────────────────────
+
+/**
+ * Block-divider: a full-line comment with a trailing blank line that splits
+ * a section (boundary or decomposition) into user-blocks. The formatter
+ * sorts items globally within a section and chooses a partition across
+ * user-blocks that minimises total redistribution distance.
+ *
+ * `afterIndex` is the 0-based input-order position in the flat array of the
+ * section's anchors (`boundary` or `blocks`); the divider is logically
+ * placed after the item at that index. `afterIndex = -1` means "before the
+ * first anchor". `afterIndex = length-1` means "after the last anchor".
+ */
+export interface BlockDivider {
+    readonly comment: Comment;
+    readonly afterIndex: number;
+}
 
 export interface ActivityAST {
     readonly kind: "activity";
@@ -178,6 +220,11 @@ export interface ActivityAST {
     readonly name: StringLiteral;
     readonly boundary: readonly BoundaryArrow[];
     readonly blocks: readonly FunctionalBlock[];
+    /** Dividers inside the boundary section, ordered by input position. */
+    readonly boundaryDividers?: readonly BlockDivider[];
+    /** Dividers inside the decomposition section. */
+    readonly blocksDividers?: readonly BlockDivider[];
+    /** Floating comments between sections / at body tail (preserved as-is). */
     readonly floatingComments: readonly Comment[];
     readonly location: SourceLocation;
     readonly filenameId?: FileId;
@@ -188,6 +235,8 @@ export interface ContextAST {
     readonly id: ContextId;
     readonly name: StringLiteral;
     readonly tunnels: readonly TunnelDecl[];
+    /** Dividers inside the tunnel list (same semantics as boundaryDividers). */
+    readonly tunnelsDividers?: readonly BlockDivider[];
     readonly rootRef: RootReference | null;
     readonly floatingComments: readonly Comment[];
     readonly location: SourceLocation;
